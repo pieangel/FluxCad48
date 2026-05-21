@@ -79,5 +79,27 @@ namespace FluxCad48.Bricscad
 
 			return result;
 		}
+
+		public static Bounds2D GetEntityBounds(Transaction tr, ObjectId id)
+		{
+			Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+			if (ent == null)
+				return null;
+
+			try
+			{
+				Extents3d ext = ent.GeometricExtents;
+
+				return new Bounds2D(
+					ext.MinPoint.X,
+					ext.MinPoint.Y,
+					ext.MaxPoint.X,
+					ext.MaxPoint.Y);
+			}
+			catch
+			{
+				return null;
+			}
+		}
 	}
 }

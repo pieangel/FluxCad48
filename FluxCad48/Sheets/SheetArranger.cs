@@ -23,7 +23,8 @@ namespace FluxCad48.Sheets
 
 			double startX = sourceTotalBounds.MaxX + options.StartGapFromSource;
 			double currentX = startX;
-			double currentRowBottomY = sourceTotalBounds.MinY;
+			double firstRowMaxHeight = GetFirstRowMaxHeight(sheets, options.MaxColumnsPerRow);
+			double currentRowBottomY = sourceTotalBounds.MaxY - firstRowMaxHeight;
 
 			double rowMaxHeight = 0.0;
 
@@ -72,6 +73,24 @@ namespace FluxCad48.Sheets
 			}
 
 			return result;
+		}
+
+		private double GetFirstRowMaxHeight(IList<SheetRegion> sheets, int maxColumns)
+		{
+			double maxHeight = 0.0;
+
+			int count = System.Math.Min(sheets.Count, maxColumns);
+
+			for (int i = 0; i < count; i++)
+			{
+				if (sheets[i] == null || sheets[i].Bounds == null || !sheets[i].Bounds.IsValid)
+					continue;
+
+				if (sheets[i].Bounds.Height > maxHeight)
+					maxHeight = sheets[i].Bounds.Height;
+			}
+
+			return maxHeight;
 		}
 	}
 }

@@ -96,6 +96,7 @@
     <Compile Include="Bricscad\BricscadEntityTools.cs" />
     <Compile Include="Commands\Commands.cs" />
     <Compile Include="Commands\FluxCopySelectedSheetsToRightCommand.cs" />
+    <Compile Include="Commands\FluxPickFrameCopySheetToRightCommand.cs" />
     <Compile Include="Geometry\Bounds2D.cs" />
     <Compile Include="Geometry\CadPoint2D.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
