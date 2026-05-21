@@ -2,7 +2,7 @@
 using Bricscad.EditorInput;
 using Teigha.Runtime;
 
-namespace FluxCad48
+namespace FluxCad48.Commands
 {
 	public class Commands
 	{

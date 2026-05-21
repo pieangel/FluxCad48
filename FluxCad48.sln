@@ -1,20 +1,38 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
-VisualStudioVersion = 17.14.37301.10 d17.14
+VisualStudioVersion = 17.14.37301.10
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FluxCad48", "FluxCad48\FluxCad48.csproj", "{49D66DA3-60A9-4979-99E0-DA77EF38190C}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
+		Debug|x64 = Debug|x64
+		FluxCad48_64|Any CPU = FluxCad48_64|Any CPU
+		FluxCad48_64|x64 = FluxCad48_64|x64
 		Release|Any CPU = Release|Any CPU
+		Release|x64 = Release|x64
+		x64|Any CPU = x64|Any CPU
+		x64|x64 = x64|x64
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{49D66DA3-60A9-4979-99E0-DA77EF38190C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{49D66DA3-60A9-4979-99E0-DA77EF38190C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{49D66DA3-60A9-4979-99E0-DA77EF38190C}.Debug|x64.ActiveCfg = Debug|x64
+		{49D66DA3-60A9-4979-99E0-DA77EF38190C}.Debug|x64.Build.0 = Debug|x64
+		{49D66DA3-60A9-4979-99E0-DA77EF38190C}.FluxCad48_64|Any CPU.ActiveCfg = FluxCad48_64|Any CPU
+		{49D66DA3-60A9-4979-99E0-DA77EF38190C}.FluxCad48_64|Any CPU.Build.0 = FluxCad48_64|Any CPU
+		{49D66DA3-60A9-4979-99E0-DA77EF38190C}.FluxCad48_64|x64.ActiveCfg = FluxCad48_64|x64
+		{49D66DA3-60A9-4979-99E0-DA77EF38190C}.FluxCad48_64|x64.Build.0 = FluxCad48_64|x64
 		{49D66DA3-60A9-4979-99E0-DA77EF38190C}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{49D66DA3-60A9-4979-99E0-DA77EF38190C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{49D66DA3-60A9-4979-99E0-DA77EF38190C}.Release|x64.ActiveCfg = Release|x64
+		{49D66DA3-60A9-4979-99E0-DA77EF38190C}.Release|x64.Build.0 = Release|x64
+		{49D66DA3-60A9-4979-99E0-DA77EF38190C}.x64|Any CPU.ActiveCfg = x64|Any CPU
+		{49D66DA3-60A9-4979-99E0-DA77EF38190C}.x64|Any CPU.Build.0 = x64|Any CPU
+		{49D66DA3-60A9-4979-99E0-DA77EF38190C}.x64|x64.ActiveCfg = x64|x64
+		{49D66DA3-60A9-4979-99E0-DA77EF38190C}.x64|x64.Build.0 = x64|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
