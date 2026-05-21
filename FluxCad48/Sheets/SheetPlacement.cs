@@ -8,7 +8,7 @@ namespace FluxCad48.Sheets
 
 		public Bounds2D SourceBounds { get; set; }
 
-		public CadPoint2D TargetBasePoint { get; set; }
+		public CadPoint2D TargetBottomLeft { get; set; }
 
 		public double MoveX { get; set; }
 
