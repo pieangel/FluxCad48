@@ -58,5 +58,26 @@ namespace FluxCad48.Bricscad
 
 			return pl;
 		}
+
+		public static Bounds2D GetModelSpaceBounds(Transaction tr, Database db)
+		{
+			Bounds2D result = new Bounds2D();
+
+			BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+			BlockTableRecord modelSpace =
+				(BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+
+			foreach (ObjectId id in modelSpace)
+			{
+				Entity entity = tr.GetObject(id, OpenMode.ForRead) as Entity;
+				if (entity == null)
+					continue;
+
+				Bounds2D b = GetEntityBounds(entity);
+				result.ExpandToInclude(b);
+			}
+
+			return result;
+		}
 	}
 }
