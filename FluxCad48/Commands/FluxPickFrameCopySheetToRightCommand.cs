@@ -5,7 +5,7 @@ using Teigha.Colors;
 using Teigha.DatabaseServices;
 using Teigha.Geometry;
 using Teigha.Runtime;
-using FluxCad48.Bricscad;
+using FluxCad48.Brics;
 using FluxCad48.Geometry;
 using FluxCad48.Sheets;
 
@@ -81,7 +81,8 @@ namespace FluxCad48.Commands
 						BricscadSheetContentFinder.FindEntitiesInsideBounds(
 							tr,
 							db,
-							frameBounds);
+							frameBounds,
+							ed);
 
 					if (!contentIds.Contains(frameId))
 						contentIds.Add(frameId);

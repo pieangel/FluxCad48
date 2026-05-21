@@ -112,5 +112,43 @@
 
 			return true;
 		}
+
+		public double Area
+		{
+			get
+			{
+				if (!IsValid)
+					return 0.0;
+
+				return Width * Height;
+			}
+		}
+
+		public double IntersectionArea(Bounds2D other)
+		{
+			if (!IsValid || other == null || !other.IsValid)
+				return 0.0;
+
+			double minX = System.Math.Max(MinX, other.MinX);
+			double minY = System.Math.Max(MinY, other.MinY);
+			double maxX = System.Math.Min(MaxX, other.MaxX);
+			double maxY = System.Math.Min(MaxY, other.MaxY);
+
+			double width = maxX - minX;
+			double height = maxY - minY;
+
+			if (width <= 0 || height <= 0)
+				return 0.0;
+
+			return width * height;
+		}
+
+		public double IntersectionAreaRatio(Bounds2D other)
+		{
+			if (Area <= 0.0)
+				return 0.0;
+
+			return IntersectionArea(other) / Area;
+		}
 	}
 }

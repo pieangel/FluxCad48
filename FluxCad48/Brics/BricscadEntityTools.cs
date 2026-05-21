@@ -3,7 +3,7 @@ using Teigha.DatabaseServices;
 using Teigha.Geometry;
 using FluxCad48.Geometry;
 
-namespace FluxCad48.Bricscad
+namespace FluxCad48.Brics
 {
 	public static class BricscadEntityTools
 	{
