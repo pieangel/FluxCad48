@@ -64,32 +64,19 @@ namespace FluxCad48.Commands
 				// TODO:
 				// 다음 단계에서 BricscadSheetContentFinder로 교체
 				// 현재는 우선 프레임만 복사 대상으로 넣어둡니다.
-				List<ObjectId> contentIds = new List<ObjectId>();
+				ed.WriteMessage(
+					"\n[FramePick] 선택 객체 Type=" + frameEntity.GetType().Name +
+					": Bounds를 기준으로 ModelSpace 객체를 수집합니다.");
 
-				BlockReference frameBlock = frameEntity as BlockReference;
+				List<ObjectId> contentIds =
+					BricscadSheetContentFinder.FindEntitiesInsideBounds(
+						tr,
+						db,
+						frameBounds,
+						ed);
 
-				if (frameBlock != null)
-				{
+				if (!contentIds.Contains(frameId))
 					contentIds.Add(frameId);
-
-					ed.WriteMessage(
-						"\n[FramePick] BlockReference 선택됨: BlockReference 자체만 복사합니다.");
-				}
-				else
-				{
-					contentIds =
-						BricscadSheetContentFinder.FindEntitiesInsideBounds(
-							tr,
-							db,
-							frameBounds,
-							ed);
-
-					if (!contentIds.Contains(frameId))
-						contentIds.Add(frameId);
-
-					ed.WriteMessage(
-						"\n[FramePick] 일반 Entity 선택됨: Bounds 내부 객체를 수집합니다.");
-				}
 
 				ed.WriteMessage(
 					"\n프레임 내부 수집 객체 수: " + contentIds.Count);
@@ -103,10 +90,6 @@ namespace FluxCad48.Commands
 					", Layer=" + frameEntity.Layer +
 					", Bounds=" + frameBounds.ToString());
 
-
-
-				if (!contentIds.Contains(frameId))
-					contentIds.Add(frameId);
 
 				List<SheetRegion> sheets = new List<SheetRegion>();
 
