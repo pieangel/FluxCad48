@@ -95,8 +95,10 @@
   <ItemGroup>
     <Compile Include="Brics\BricscadEntityTools.cs" />
     <Compile Include="Brics\BricscadSheetContentFinder.cs" />
+    <Compile Include="Brics\WorldEntityInfo.cs" />
     <Compile Include="Commands\Commands.cs" />
     <Compile Include="Commands\FluxCopySelectedSheetsToRightCommand.cs" />
+    <Compile Include="Commands\FluxDebugSelectedCoordsDeepCommand.cs" />
     <Compile Include="Commands\FluxPickFrameCopySheetToRightCommand.cs" />
     <Compile Include="Geometry\Bounds2D.cs" />
     <Compile Include="Geometry\CadPoint2D.cs" />

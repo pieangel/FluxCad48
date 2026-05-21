@@ -1,13 +1,14 @@
-﻿using System.Collections.Generic;
-using Bricscad.ApplicationServices;
+﻿using Bricscad.ApplicationServices;
 using Bricscad.EditorInput;
+using FluxCad48.Brics;
+using FluxCad48.Geometry;
+using FluxCad48.Sheets;
+using System;
+using System.Collections.Generic;
 using Teigha.Colors;
 using Teigha.DatabaseServices;
 using Teigha.Geometry;
 using Teigha.Runtime;
-using FluxCad48.Brics;
-using FluxCad48.Geometry;
-using FluxCad48.Sheets;
 
 namespace FluxCad48.Commands
 {
@@ -163,6 +164,54 @@ namespace FluxCad48.Commands
 				ed.WriteMessage(
 					"\nFLUX_PICK_FRAME_COPY_SHEET_TO_RIGHT 완료: 선택한 프레임 기준 쉬트를 오른쪽 공간에 복사했습니다.");
 			}
+		}
+
+		[CommandMethod("FLUX_DEBUG_WORLD_ENTITIES")]
+		public void FluxDebugWorldEntities()
+		{
+			Document doc = Application.DocumentManager.MdiActiveDocument;
+			Database db = doc.Database;
+			Editor ed = doc.Editor;
+
+			using (Transaction tr = db.TransactionManager.StartTransaction())
+			{
+				List<WorldEntityInfo> infos =
+					BricscadEntityTools.CollectWorldEntitiesDeep(tr, db);
+
+				ed.WriteMessage($"\n[WorldEntities] Count={infos.Count}");
+
+				int invalid = 0;
+				int insideBlock = 0;
+
+				foreach (WorldEntityInfo info in infos)
+				{
+					if (info.WorldBounds == null || !info.WorldBounds.IsValid)
+						invalid++;
+
+					if (info.IsInsideBlock)
+						insideBlock++;
+				}
+
+				ed.WriteMessage($"\n[WorldEntities] InsideBlock={insideBlock}, InvalidBounds={invalid}");
+
+				for (int i = 0; i < Math.Min(50, infos.Count); i++)
+				{
+					WorldEntityInfo info = infos[i];
+
+					ed.WriteMessage(
+						$"\n[{i}] Type={info.EntityType}, Layer={info.Layer}, Depth={info.BlockDepth}, World={FormatBoundsForDebug(info.WorldBounds)}");
+				}
+
+				tr.Commit();
+			}
+		}
+
+		private static string FormatBoundsForDebug(Bounds2D b)
+		{
+			if (b == null || !b.IsValid)
+				return "(invalid)";
+
+			return $"Min=({b.MinX:0.###},{b.MinY:0.###}) Max=({b.MaxX:0.###},{b.MaxY:0.###}) W={b.Width:0.###} H={b.Height:0.###}";
 		}
 	}
 }
