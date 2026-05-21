@@ -94,6 +94,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Bricscad\BricscadEntityTools.cs" />
+    <Compile Include="Bricscad\BricscadSheetContentFinder.cs" />
     <Compile Include="Commands\Commands.cs" />
     <Compile Include="Commands\FluxCopySelectedSheetsToRightCommand.cs" />
     <Compile Include="Commands\FluxPickFrameCopySheetToRightCommand.cs" />

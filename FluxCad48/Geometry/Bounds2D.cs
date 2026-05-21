@@ -63,5 +63,54 @@
 			MaxX = System.Math.Max(MaxX, other.MaxX);
 			MaxY = System.Math.Max(MaxY, other.MaxY);
 		}
+
+		public bool ContainsPoint(double x, double y)
+		{
+			if (!IsValid)
+				return false;
+
+			return x >= MinX &&
+				   x <= MaxX &&
+				   y >= MinY &&
+				   y <= MaxY;
+		}
+
+		public bool ContainsBounds(Bounds2D other)
+		{
+			if (!IsValid || other == null || !other.IsValid)
+				return false;
+
+			return ContainsPoint(other.MinX, other.MinY) &&
+				   ContainsPoint(other.MaxX, other.MaxY);
+		}
+
+		public Bounds2D Expand(double margin)
+		{
+			return new Bounds2D(
+				MinX - margin,
+				MinY - margin,
+				MaxX + margin,
+				MaxY + margin);
+		}
+
+		public bool Intersects(Bounds2D other)
+		{
+			if (!IsValid || other == null || !other.IsValid)
+				return false;
+
+			if (MaxX < other.MinX)
+				return false;
+
+			if (MinX > other.MaxX)
+				return false;
+
+			if (MaxY < other.MinY)
+				return false;
+
+			if (MinY > other.MaxY)
+				return false;
+
+			return true;
+		}
 	}
 }

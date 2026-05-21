@@ -64,8 +64,17 @@ namespace FluxCad48.Commands
 				// TODO:
 				// 다음 단계에서 BricscadSheetContentFinder로 교체
 				// 현재는 우선 프레임만 복사 대상으로 넣어둡니다.
-				List<ObjectId> contentIds = new List<ObjectId>();
-				contentIds.Add(frameId);
+				List<ObjectId> contentIds =
+					BricscadSheetContentFinder.FindEntitiesInsideBounds(
+						tr,
+						db,
+						frameBounds);
+
+				ed.WriteMessage(
+					"\n프레임 내부 수집 객체 수: " + contentIds.Count);
+
+				if (!contentIds.Contains(frameId))
+					contentIds.Add(frameId);
 
 				List<SheetRegion> sheets = new List<SheetRegion>();
 
