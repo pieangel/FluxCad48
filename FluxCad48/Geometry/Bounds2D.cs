@@ -167,5 +167,13 @@
 			MaxX = System.Math.Max(MaxX, x);
 			MaxY = System.Math.Max(MaxY, y);
 		}
+
+		public override string ToString()
+		{
+			return
+				$"Min=({MinX:0.##},{MinY:0.##}) " +
+				$"Max=({MaxX:0.##},{MaxY:0.##}) " +
+				$"W={Width:0.##}, H={Height:0.##}";
+		}
 	}
 }

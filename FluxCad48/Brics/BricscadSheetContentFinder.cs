@@ -92,7 +92,11 @@ namespace FluxCad48.Brics
 			}
 
 			ed.WriteMessage(
-				$"\n[Ownership] Type={ent.GetType().Name}, CenterInside={centerInside}, Overlap={overlapRatio:0.000}, Keep={keep}");
+				$"\n[Ownership] Type={ent.GetType().Name}, Layer={ent.Layer}" +
+				$"\n  EntityBounds={entityBounds}" +
+				$"\n  FrameBounds ={frameBounds}" +
+				$"\n  Center=({entityBounds.CenterX:0.##},{entityBounds.CenterY:0.##})" +
+				$"\n  CenterInside={centerInside}, Overlap={overlapRatio:0.000}, Keep={keep}");
 
 			return keep;
 		}
