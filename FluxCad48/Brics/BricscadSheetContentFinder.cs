@@ -35,20 +35,18 @@ namespace FluxCad48.Brics
 					BricscadEntityTools.GetEntityBounds(tr, id);
 
 				if (entityBounds == null || !entityBounds.IsValid)
+				{
+					ed.WriteMessage(
+						$"\n[SkipBounds] Type={ent.GetType().Name}, Layer={ent.Layer}");
+
 					continue;
+				}
 
 				if (!TryDecideOwnership(ent, entityBounds, frameBounds, ed))
 					continue;
 
-				result.Add(id);
-
-				BlockReference br = ent as BlockReference;
-
-				if (br != null && frameBounds.Intersects(entityBounds))
-				{
+				if (!result.Contains(id))
 					result.Add(id);
-					continue;
-				}
 			}
 
 			return result;
@@ -61,26 +59,7 @@ namespace FluxCad48.Brics
 			Editor ed,
 			double overlapThreshold = 0.60)
 		{
-			bool centerInside = frameBounds.ContainsPoint(
-				entityBounds.CenterX,
-				entityBounds.CenterY);
-
-			double overlapRatio = entityBounds.IntersectionAreaRatio(frameBounds);
-
-			bool keep = centerInside || overlapRatio >= overlapThreshold;
-
-			ed.WriteMessage(
-				$"\n[Ownership] Type={ent.GetType().Name}, CenterInside={centerInside}, Overlap={overlapRatio:0.000}, Keep={keep}");
-
-			return keep;
-		}
-
-		private static bool IsOwnedByFrame(
-			Bounds2D entityBounds,
-			Bounds2D frameBounds,
-			double overlapThreshold = 0.60)
-		{
-			if (entityBounds == null || !entityBounds.IsValid)
+			if (ent == null || entityBounds == null || !entityBounds.IsValid)
 				return false;
 
 			if (frameBounds == null || !frameBounds.IsValid)
@@ -90,44 +69,42 @@ namespace FluxCad48.Brics
 				entityBounds.CenterX,
 				entityBounds.CenterY);
 
-			if (centerInside)
-				return true;
-
 			double overlapRatio = entityBounds.IntersectionAreaRatio(frameBounds);
 
-			return overlapRatio >= overlapThreshold;
-		}
+			bool keep = centerInside || overlapRatio >= overlapThreshold;
 
-		public static List<ObjectId> FindOwnedEntitiesByFrameBounds(
-			Database db,
-			Transaction tr,
-			Bounds2D frameBounds)
-		{
-			var result = new List<ObjectId>();
-
-			var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-			var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
-
-			foreach (ObjectId id in ms)
+			if (!keep && IsAnnotationEntity(ent))
 			{
-				if (id.IsNull || id.IsErased)
-					continue;
+				double margin =
+					System.Math.Max(frameBounds.Width, frameBounds.Height) * 0.03;
 
-				var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
-				if (ent == null)
-					continue;
-				/*
-				if (!TryGetBounds2D(ent, out var entityBounds))
-					continue;
+				Bounds2D expandedFrame = frameBounds.Expand(margin);
 
-				if (IsOwnedByFrame(entityBounds, frameBounds, 0.60))
-				{
-					result.Add(id);
-				}
-				*/
+				bool annotationCenterInside =
+					expandedFrame.ContainsPoint(
+						entityBounds.CenterX,
+						entityBounds.CenterY);
+
+				bool annotationIntersects =
+					expandedFrame.Intersects(entityBounds);
+
+				keep = annotationCenterInside || annotationIntersects;
 			}
 
-			return result;
+			ed.WriteMessage(
+				$"\n[Ownership] Type={ent.GetType().Name}, CenterInside={centerInside}, Overlap={overlapRatio:0.000}, Keep={keep}");
+
+			return keep;
 		}
+
+		private static bool IsAnnotationEntity(Entity ent)
+		{
+			return ent is DBText ||
+				   ent is MText ||
+				   ent is Dimension ||
+				   ent is Leader;
+		}
+
+		
 	}
 }

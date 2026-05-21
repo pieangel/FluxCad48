@@ -28,21 +28,65 @@ namespace FluxCad48.Brics
 			}
 		}
 
-		public static Bounds2D GetEntitiesBounds(Transaction tr, IEnumerable<ObjectId> ids)
+		public static Bounds2D GetEntityBounds(Transaction tr, ObjectId id)
 		{
-			Bounds2D result = new Bounds2D();
+			Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
 
-			foreach (ObjectId id in ids)
+			if (ent == null)
+				return null;
+
+			try
 			{
-				Entity entity = tr.GetObject(id, OpenMode.ForRead) as Entity;
-				if (entity == null)
-					continue;
+				Extents3d ext = ent.GeometricExtents;
 
-				Bounds2D b = GetEntityBounds(entity);
-				result.ExpandToInclude(b);
+				Bounds2D b = new Bounds2D(
+					ext.MinPoint.X,
+					ext.MinPoint.Y,
+					ext.MaxPoint.X,
+					ext.MaxPoint.Y);
+
+				if (b.IsValid)
+					return b;
+			}
+			catch
+			{
 			}
 
-			return result;
+			Polyline pl = ent as Polyline;
+
+			if (pl != null)
+				return GetPolylineBounds(pl);
+
+			return null;
+		}
+
+		private static Bounds2D GetPolylineBounds(Polyline pl)
+		{
+			if (pl == null || pl.NumberOfVertices <= 0)
+				return null;
+
+			double minX = double.MaxValue;
+			double minY = double.MaxValue;
+			double maxX = double.MinValue;
+			double maxY = double.MinValue;
+
+			for (int i = 0; i < pl.NumberOfVertices; i++)
+			{
+				Point2d p = pl.GetPoint2dAt(i);
+
+				minX = System.Math.Min(minX, p.X);
+				minY = System.Math.Min(minY, p.Y);
+				maxX = System.Math.Max(maxX, p.X);
+				maxY = System.Math.Max(maxY, p.Y);
+			}
+
+			Bounds2D bounds = new Bounds2D(minX, minY, maxX, maxY);
+
+			// 수평선/수직선/점형 polyline 구제
+			if (!bounds.IsValid)
+				bounds = bounds.Expand(0.01);
+
+			return bounds;
 		}
 
 		public static Polyline CreateRectanglePolyline(Bounds2D bounds)
@@ -80,26 +124,34 @@ namespace FluxCad48.Brics
 			return result;
 		}
 
-		public static Bounds2D GetEntityBounds(Transaction tr, ObjectId id)
+		public static Bounds2D GetEntitiesBounds(
+			Transaction tr,
+			IEnumerable<ObjectId> ids)
 		{
-			Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
-			if (ent == null)
-				return null;
+			Bounds2D result = null;
 
-			try
+			foreach (ObjectId id in ids)
 			{
-				Extents3d ext = ent.GeometricExtents;
+				Bounds2D bounds = GetEntityBounds(tr, id);
 
-				return new Bounds2D(
-					ext.MinPoint.X,
-					ext.MinPoint.Y,
-					ext.MaxPoint.X,
-					ext.MaxPoint.Y);
+				if (bounds == null || !bounds.IsValid)
+					continue;
+
+				if (result == null)
+				{
+					result = new Bounds2D(
+						bounds.MinX,
+						bounds.MinY,
+						bounds.MaxX,
+						bounds.MaxY);
+				}
+				else
+				{
+					result.ExpandToInclude(bounds);
+				}
 			}
-			catch
-			{
-				return null;
-			}
+
+			return result;
 		}
 	}
 }

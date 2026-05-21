@@ -150,5 +150,22 @@
 
 			return IntersectionArea(other) / Area;
 		}
+
+		public void IncludePoint(double x, double y)
+		{
+			if (!IsValid)
+			{
+				MinX = x;
+				MinY = y;
+				MaxX = x;
+				MaxY = y;
+				return;
+			}
+
+			MinX = System.Math.Min(MinX, x);
+			MinY = System.Math.Min(MinY, y);
+			MaxX = System.Math.Max(MaxX, x);
+			MaxY = System.Math.Max(MaxY, y);
+		}
 	}
 }
