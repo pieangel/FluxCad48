@@ -93,19 +93,23 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Bricscad\BricscadEntityTools.cs" />
     <Compile Include="Commands\Commands.cs" />
+    <Compile Include="Commands\FluxCopySelectedSheetsToRightCommand.cs" />
+    <Compile Include="Geometry\Bounds2D.cs" />
+    <Compile Include="Geometry\CadPoint2D.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="Sheets\SheetArrangeOptions.cs" />
+    <Compile Include="Sheets\SheetPlacement.cs" />
+    <Compile Include="Sheets\SheetRegion.cs" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="README.txt" />
   </ItemGroup>
   <ItemGroup>
-    <Folder Include="Bricscad\" />
     <Folder Include="Dimensions\" />
     <Folder Include="Drawing\" />
     <Folder Include="Features\" />
-    <Folder Include="Geometry\" />
-    <Folder Include="Sheets\" />
     <Folder Include="Unfold\" />
     <Folder Include="Utils\" />
     <Folder Include="Views\" />
