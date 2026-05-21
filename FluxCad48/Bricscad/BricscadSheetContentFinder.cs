@@ -37,7 +37,17 @@ namespace FluxCad48.Bricscad
 					continue;
 
 				if (frameBounds.ContainsBounds(entityBounds))
+				{
 					result.Add(id);
+				}
+
+				BlockReference br = ent as BlockReference;
+
+				if (br != null && frameBounds.Intersects(entityBounds))
+				{
+					result.Add(id);
+					continue;
+				}
 			}
 
 			return result;
