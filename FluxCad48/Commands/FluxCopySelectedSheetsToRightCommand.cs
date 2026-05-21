@@ -75,6 +75,11 @@ namespace FluxCad48.Commands
 				BlockTableRecord modelSpace =
 					(BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
+				// 여기에 추가
+				BricscadEntityTools.EnsureLayer(tr, db, "FLUX_COPIED");
+				BricscadEntityTools.EnsureLayer(tr, db, "FLUX_MARKER");
+
+
 				foreach (SheetPlacement placement in placements)
 				{
 					ObjectIdCollection idsToClone = new ObjectIdCollection();
@@ -102,13 +107,19 @@ namespace FluxCad48.Commands
 						if (clonedEntity == null)
 							continue;
 
+						BricscadEntityTools.EnsureLayer(tr, db, "FLUX_COPIED");
+
 						clonedEntity.TransformBy(Matrix3d.Displacement(displacement));
+
+						clonedEntity.Layer = "FLUX_COPIED";
 					}
 
 					if (options.DrawYellowMarkerOnSource)
 					{
 						Polyline marker =
 							BricscadEntityTools.CreateRectanglePolyline(placement.SourceBounds);
+
+						marker.Layer = "FLUX_MARKER";
 
 						marker.Color = Color.FromColorIndex(ColorMethod.ByAci, 2); // Yellow
 						marker.LineWeight = LineWeight.LineWeight050;

@@ -185,6 +185,27 @@ namespace FluxCad48.Brics
 			return result;
 		}
 
+		public static void EnsureLayer(Transaction tr, Database db, string layerName)
+		{
+			LayerTable lt = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
+
+			if (lt.Has(layerName))
+				return;
+
+			lt.UpgradeOpen();
+
+			LayerTableRecord ltr = new LayerTableRecord();
+			ltr.Name = layerName;
+
+			lt.Add(ltr);
+			tr.AddNewlyCreatedDBObject(ltr, true);
+		}
+
+		private static bool IsFluxGeneratedLayer(string layer)
+		{
+			return layer == "FLUX_COPIED" || layer == "FLUX_MARKER";
+		}
+
 		private static void CollectWorldEntityRecursive(
 			Transaction tr,
 			Entity ent,
@@ -194,6 +215,8 @@ namespace FluxCad48.Brics
 			List<WorldEntityInfo> result)
 		{
 			if (ent == null)
+				return;
+			if (IsFluxGeneratedLayer(ent.Layer))
 				return;
 
 			Bounds2D localBounds = GetEntityBoundsSafe(ent);

@@ -1,4 +1,7 @@
-﻿namespace FluxCad48.Geometry
+﻿using System;
+using Teigha.Geometry;
+
+namespace FluxCad48.Geometry
 {
 	public class Bounds2D
 	{
@@ -174,6 +177,44 @@
 				$"Min=({MinX:0.##},{MinY:0.##}) " +
 				$"Max=({MaxX:0.##},{MaxY:0.##}) " +
 				$"W={Width:0.##}, H={Height:0.##}";
+		}
+
+		public Point2d CenterPoint
+		{
+			get
+			{
+				return new Point2d(
+					(MinX + MaxX) / 2.0,
+					(MinY + MaxY) / 2.0);
+			}
+		}
+
+		public double GetIntersectionArea(Bounds2D other)
+		{
+			if (other == null || !other.IsValid || !IsValid)
+				return 0.0;
+
+			double minX = Math.Max(MinX, other.MinX);
+			double minY = Math.Max(MinY, other.MinY);
+			double maxX = Math.Min(MaxX, other.MaxX);
+			double maxY = Math.Min(MaxY, other.MaxY);
+
+			if (maxX <= minX || maxY <= minY)
+				return 0.0;
+
+			return (maxX - minX) * (maxY - minY);
+		}
+
+		public bool ContainsPoint(Point2d p)
+		{
+			if (!IsValid)
+				return false;
+
+			return
+				p.X >= MinX &&
+				p.X <= MaxX &&
+				p.Y >= MinY &&
+				p.Y <= MaxY;
 		}
 	}
 }
