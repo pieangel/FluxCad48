@@ -283,11 +283,17 @@ namespace FluxCad48.Commands
 						? overlapArea / info.WorldBounds.Area
 						: 0.0;
 
-				bool centerInside =
-					frameBounds.ContainsPoint(info.WorldBounds.CenterPoint);
+				double tolerance = 3.0;
+
+				bool strictlyInsideFrame =
+					frameBounds.ContainsBounds(info.WorldBounds, tolerance);
+
+				bool tooLargeForFrame =
+					info.WorldBounds.Width > frameBounds.Width * 1.02 ||
+					info.WorldBounds.Height > frameBounds.Height * 1.02;
 
 				bool keep =
-					centerInside || ratioByEntity >= 0.50;
+					strictlyInsideFrame && !tooLargeForFrame;
 
 				if (!keep)
 					continue;

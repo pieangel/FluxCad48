@@ -216,5 +216,16 @@ namespace FluxCad48.Geometry
 				p.Y >= MinY &&
 				p.Y <= MaxY;
 		}
+
+		public bool ContainsBounds(Bounds2D other, double tolerance = 0.0)
+		{
+			if (other == null || !other.IsValid || !this.IsValid)
+				return false;
+
+			return other.MinX >= this.MinX - tolerance &&
+				   other.MaxX <= this.MaxX + tolerance &&
+				   other.MinY >= this.MinY - tolerance &&
+				   other.MaxY <= this.MaxY + tolerance;
+		}
 	}
 }
