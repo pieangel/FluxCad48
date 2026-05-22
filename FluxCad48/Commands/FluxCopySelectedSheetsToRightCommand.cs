@@ -13,6 +13,9 @@ namespace FluxCad48.Commands
 {
 	public class FluxCopySelectedSheetsToRightCommand
 	{
+		private const string CopiedLayerName = "FLUX_COPIED";
+		private const string MarkerLayerName = "FLUX_MARKER";
+
 		[CommandMethod("FLUX_COPY_SELECTED_SHEETS_TO_RIGHT")]
 		public void FluxCopySelectedSheetsToRight()
 		{
@@ -21,13 +24,13 @@ namespace FluxCad48.Commands
 			Editor ed = doc.Editor;
 
 			PromptSelectionOptions pso = new PromptSelectionOptions();
-			pso.MessageForAdding = "\n오른쪽으로 복사할 쉬트 객체들을 선택하세요. 선택 후 Enter를 누르세요: ";
+			pso.MessageForAdding = "\n오른쪽으로 복사할 객체들을 드래그 선택하세요: ";
 
 			PromptSelectionResult psr = ed.GetSelection(pso);
 
 			if (psr.Status != PromptStatus.OK)
 			{
-				ed.WriteMessage("\n선택이 완료되지 않았습니다. 객체 선택 후 Enter를 눌러 주세요."); 
+				ed.WriteMessage("\n선택이 완료되지 않았습니다.");
 				return;
 			}
 
@@ -35,11 +38,12 @@ namespace FluxCad48.Commands
 
 			using (Transaction tr = db.TransactionManager.StartTransaction())
 			{
-				Bounds2D sourceBounds = BricscadEntityTools.GetEntitiesBounds(tr, selectedIds);
+				Bounds2D selectedBounds =
+					BricscadEntityTools.GetEntitiesBounds(tr, selectedIds);
 
-				if (sourceBounds == null || !sourceBounds.IsValid)
+				if (selectedBounds == null || !selectedBounds.IsValid)
 				{
-					ed.WriteMessage("\n선택 영역의 Bounds를 계산하지 못했습니다.");
+					ed.WriteMessage("\n선택 객체 Bounds를 계산하지 못했습니다.");
 					return;
 				}
 
@@ -51,15 +55,14 @@ namespace FluxCad48.Commands
 					return;
 				}
 
-				List<SheetRegion> sheets = new List<SheetRegion>();
-
 				SheetRegion sheet = new SheetRegion();
 				sheet.Index = 0;
-				sheet.Bounds = sourceBounds;
+				sheet.Bounds = selectedBounds;
 
 				foreach (ObjectId id in selectedIds)
 					sheet.EntityIds.Add(id);
 
+				List<SheetRegion> sheets = new List<SheetRegion>();
 				sheets.Add(sheet);
 
 				SheetArrangeOptions options = new SheetArrangeOptions();
@@ -75,10 +78,8 @@ namespace FluxCad48.Commands
 				BlockTableRecord modelSpace =
 					(BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
-				// 여기에 추가
-				BricscadEntityTools.EnsureLayer(tr, db, "FLUX_COPIED");
-				BricscadEntityTools.EnsureLayer(tr, db, "FLUX_MARKER");
-
+				BricscadEntityTools.EnsureLayer(tr, db, CopiedLayerName);
+				BricscadEntityTools.EnsureLayer(tr, db, MarkerLayerName);
 
 				foreach (SheetPlacement placement in placements)
 				{
@@ -98,6 +99,8 @@ namespace FluxCad48.Commands
 					Vector3d displacement =
 						new Vector3d(placement.MoveX, placement.MoveY, 0);
 
+					int clonedCount = 0;
+
 					foreach (IdPair pair in mapping)
 					{
 						if (!pair.IsCloned)
@@ -107,32 +110,31 @@ namespace FluxCad48.Commands
 						if (clonedEntity == null)
 							continue;
 
-						BricscadEntityTools.EnsureLayer(tr, db, "FLUX_COPIED");
-
 						clonedEntity.TransformBy(Matrix3d.Displacement(displacement));
-
-						clonedEntity.Layer = "FLUX_COPIED";
+						clonedEntity.Layer = CopiedLayerName;
+						clonedCount++;
 					}
 
-					if (options.DrawYellowMarkerOnSource)
-					{
-						Polyline marker =
-							BricscadEntityTools.CreateRectanglePolyline(placement.SourceBounds);
+					Polyline marker =
+						BricscadEntityTools.CreateRectanglePolyline(placement.SourceBounds);
 
-						marker.Layer = "FLUX_MARKER";
+					marker.Color = Color.FromColorIndex(ColorMethod.ByAci, 2);
+					marker.LineWeight = LineWeight.LineWeight050;
+					marker.Layer = MarkerLayerName;
 
-						marker.Color = Color.FromColorIndex(ColorMethod.ByAci, 2); // Yellow
-						marker.LineWeight = LineWeight.LineWeight050;
+					modelSpace.AppendEntity(marker);
+					tr.AddNewlyCreatedDBObject(marker, true);
 
-						modelSpace.AppendEntity(marker);
-						tr.AddNewlyCreatedDBObject(marker, true);
-					}
+					ed.WriteMessage(
+						"\n[SelectionCopy] Selected=" + selectedIds.Length +
+						", Cloned=" + clonedCount +
+						", Bounds=" + selectedBounds);
 				}
 
 				tr.Commit();
 
 				ed.WriteMessage(
-					"\nFLUX_COPY_SELECTED_SHEETS_TO_RIGHT 완료: 선택 영역을 오른쪽 공간에 정렬 복사하고 원본에 노란 테두리를 표시했습니다.");
+					"\nFLUX_COPY_SELECTED_SHEETS_TO_RIGHT 완료: 드래그 선택 객체를 오른쪽 공간에 복사했습니다.");
 			}
 		}
 	}

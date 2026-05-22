@@ -14,6 +14,8 @@ namespace FluxCad48.Commands
 {
 	public class FluxPickFrameCopySheetToRightCommand
 	{
+		private const string CopiedLayerName = "FLUX_COPIED";
+		private const string MarkerLayerName = "FLUX_MARKER";
 
 		[CommandMethod("FLUX_PICK_FRAME_COPY_SHEET_TO_RIGHT")]
 		public void FluxPickFrameCopySheetToRight()
@@ -63,14 +65,9 @@ namespace FluxCad48.Commands
 					return;
 				}
 
-				// TODO:
-				// 다음 단계에서 BricscadSheetContentFinder로 교체
-				// 현재는 우선 프레임만 복사 대상으로 넣어둡니다.
 				ed.WriteMessage(
 					"\n[FramePick] 선택 객체 Type=" + frameEntity.GetType().Name +
-					": Bounds를 기준으로 ModelSpace 객체를 수집합니다.");
-
-				List<ObjectId> contentIds = new List<ObjectId>();
+					": WorldBounds를 기준으로 ownership을 판정합니다.");
 
 				List<WorldEntityInfo> worldInfos =
 					BricscadEntityTools.CollectWorldEntitiesDeep(tr, db);
@@ -78,150 +75,20 @@ namespace FluxCad48.Commands
 				ed.WriteMessage(
 					"\n[WorldOwnership] WorldEntityInfo Count=" + worldInfos.Count);
 
-				int tested = 0;
-				int accepted = 0;
-				int blockChildAccepted = 0;
-				int duplicateSkipped = 0;
-				int ownerRejected = 0;
-				int childSourceAdded = 0;
+				List<WorldEntityInfo> acceptedInfos =
+					CollectOwnedWorldEntities(
+						tr,
+						ed,
+						worldInfos,
+						frameBounds);
 
-				foreach (WorldEntityInfo info in worldInfos)
+				if (acceptedInfos.Count == 0)
 				{
-					tested++;
-
-					if (info.WorldBounds == null || !info.WorldBounds.IsValid)
-						continue;
-
-					double overlapArea =
-						frameBounds.GetIntersectionArea(info.WorldBounds);
-
-					double ratioByEntity =
-						info.WorldBounds.Area > 0
-							? overlapArea / info.WorldBounds.Area
-							: 0.0;
-
-					bool centerInside =
-						frameBounds.ContainsPoint(info.WorldBounds.CenterPoint);
-
-					bool keep =
-						centerInside || ratioByEntity >= 0.50;
-
-					if (!keep)
-						continue;
-
-					ObjectId idToAdd = info.SourceId;
-
-					if (info.BlockDepth > 0 && !info.OwnerBlockReferenceId.IsNull)
-					{
-						Entity ownerBrEntity =
-							tr.GetObject(info.OwnerBlockReferenceId, OpenMode.ForRead) as Entity;
-
-						Bounds2D ownerBounds =
-							ownerBrEntity != null
-								? BricscadEntityTools.GetEntityBoundsSafe(ownerBrEntity)
-								: null;
-
-						double ownerOverlapArea =
-							ownerBounds != null
-								? frameBounds.GetIntersectionArea(ownerBounds)
-								: 0.0;
-
-						double ownerRatio =
-							ownerBounds != null && ownerBounds.Area > 0
-								? ownerOverlapArea / ownerBounds.Area
-								: 0.0;
-
-						bool ownerCenterInside =
-							ownerBounds != null &&
-							frameBounds.ContainsPoint(ownerBounds.CenterPoint);
-
-						if (!(ownerCenterInside || ownerRatio >= 0.80))
-						{
-							ownerRejected++;
-							continue;
-						}
-
-						idToAdd = info.OwnerBlockReferenceId;
-						blockChildAccepted++;
-					}
-
-					/*
-					if (info.BlockDepth > 0 && !info.OwnerBlockReferenceId.IsNull)
-					{
-						if (!contentIds.Contains(info.SourceId))
-						{
-							contentIds.Add(info.SourceId);
-							childSourceAdded++;
-						}
-					}
-					*/
-
-					if (contentIds.Contains(idToAdd))
-					{
-						duplicateSkipped++;
-						continue;
-					}
-
-					contentIds.Add(idToAdd);
-					accepted++;
+					ed.WriteMessage("\n복사할 내부 객체를 찾지 못했습니다.");
+					return;
 				}
 
-				if (!contentIds.Contains(frameId))
-					contentIds.Add(frameId);
-
-				ed.WriteMessage(
-					"\n[WorldOwnership] Tested=" + tested +
-					", Accepted=" + accepted +
-					", BlockChildAccepted=" + blockChildAccepted +
-					", DuplicateSkipped=" + duplicateSkipped +
-					", OwnerRejected=" + ownerRejected +
-					", ChildSourceAdded=" + childSourceAdded +
-					", FinalContentIds=" + contentIds.Count);
-
-				if (!contentIds.Contains(frameId))
-					contentIds.Add(frameId);
-
-				ed.WriteMessage(
-					"\n프레임 내부 수집 객체 수: " + contentIds.Count);
-
-				Dictionary<string, int> typeCounts = new Dictionary<string, int>();
-				Dictionary<string, int> layerCounts = new Dictionary<string, int>();
-
-				foreach (ObjectId id in contentIds)
-				{
-					Entity e = tr.GetObject(id, OpenMode.ForRead) as Entity;
-					if (e == null)
-						continue;
-
-					string type = e.GetType().Name;
-					string layer = e.Layer ?? "(null)";
-
-					if (!typeCounts.ContainsKey(type))
-						typeCounts[type] = 0;
-
-					typeCounts[type]++;
-
-					if (!layerCounts.ContainsKey(layer))
-						layerCounts[layer] = 0;
-
-					layerCounts[layer]++;
-				}
-
-				ed.WriteMessage("\n[ContentSummary] Type Counts:");
-
-				foreach (KeyValuePair<string, int> kv in typeCounts)
-				{
-					ed.WriteMessage(
-						"\n  Type=" + kv.Key + ", Count=" + kv.Value);
-				}
-
-				ed.WriteMessage("\n[ContentSummary] Layer Counts:");
-
-				foreach (KeyValuePair<string, int> kv in layerCounts)
-				{
-					ed.WriteMessage(
-						"\n  Layer=" + kv.Key + ", Count=" + kv.Value);
-				}
+				PrintWorldEntitySummary(ed, acceptedInfos);
 
 				ed.WriteMessage(
 					"\n[FrameBounds] Width=" + frameBounds.Width +
@@ -232,16 +99,11 @@ namespace FluxCad48.Commands
 					", Layer=" + frameEntity.Layer +
 					", Bounds=" + frameBounds.ToString());
 
-
 				List<SheetRegion> sheets = new List<SheetRegion>();
 
 				SheetRegion sheet = new SheetRegion();
 				sheet.Index = 0;
 				sheet.Bounds = frameBounds;
-
-				foreach (ObjectId id in contentIds)
-					sheet.EntityIds.Add(id);
-
 				sheets.Add(sheet);
 
 				SheetArrangeOptions options = new SheetArrangeOptions();
@@ -257,39 +119,42 @@ namespace FluxCad48.Commands
 				BlockTableRecord modelSpace =
 					(BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
+				BricscadEntityTools.EnsureLayer(tr, db, CopiedLayerName);
+				BricscadEntityTools.EnsureLayer(tr, db, MarkerLayerName);
+
 				foreach (SheetPlacement placement in placements)
 				{
-					ObjectIdCollection idsToClone = new ObjectIdCollection();
-
-					foreach (ObjectId id in placement.SourceSheet.EntityIds)
-						idsToClone.Add(id);
-
-					IdMapping mapping = new IdMapping();
-
-					db.DeepCloneObjects(
-						idsToClone,
-						modelSpace.ObjectId,
-						mapping,
-						false);
+					int clonedCount = 0;
+					int failedCount = 0;
 
 					Vector3d displacement =
 						new Vector3d(placement.MoveX, placement.MoveY, 0);
 
-					foreach (IdPair pair in mapping)
+					foreach (WorldEntityInfo info in acceptedInfos)
 					{
-						if (!pair.IsCloned)
-							continue;
+						Entity clonedEntity =
+							BricscadEntityTools.WorldCloneEntityToModelSpace(
+								tr,
+								db,
+								modelSpace,
+								info,
+								displacement,
+								CopiedLayerName);
 
-						Entity clonedEntity = tr.GetObject(pair.Value, OpenMode.ForWrite) as Entity;
 						if (clonedEntity == null)
+						{
+							failedCount++;
 							continue;
+						}
 
-						BricscadEntityTools.EnsureLayer(tr, db, "FLUX_COPIED");
-
-						clonedEntity.TransformBy(Matrix3d.Displacement(displacement));
-
-						clonedEntity.Layer = "FLUX_COPIED";
+						clonedCount++;
 					}
+
+					ed.WriteMessage(
+						"\n[WorldClone] Cloned=" + clonedCount +
+						", Failed=" + failedCount +
+						", Move=(" + placement.MoveX.ToString("0.###") +
+						"," + placement.MoveY.ToString("0.###") + ")");
 
 					if (options.DrawYellowMarkerOnSource)
 					{
@@ -298,6 +163,7 @@ namespace FluxCad48.Commands
 
 						marker.Color = Color.FromColorIndex(ColorMethod.ByAci, 2);
 						marker.LineWeight = LineWeight.LineWeight050;
+						marker.Layer = MarkerLayerName;
 
 						modelSpace.AppendEntity(marker);
 						tr.AddNewlyCreatedDBObject(marker, true);
@@ -307,7 +173,146 @@ namespace FluxCad48.Commands
 				tr.Commit();
 
 				ed.WriteMessage(
-					"\nFLUX_PICK_FRAME_COPY_SHEET_TO_RIGHT 완료: 선택한 프레임 기준 쉬트를 오른쪽 공간에 복사했습니다.");
+					"\nFLUX_PICK_FRAME_COPY_SHEET_TO_RIGHT 완료: WorldClone 방식으로 선택 프레임 내부 쉬트를 오른쪽에 복사했습니다.");
+			}
+		}
+
+		private static List<WorldEntityInfo> CollectOwnedWorldEntities(
+			Transaction tr,
+			Editor ed,
+			List<WorldEntityInfo> worldInfos,
+			Bounds2D frameBounds)
+		{
+			List<WorldEntityInfo> result = new List<WorldEntityInfo>();
+			HashSet<ObjectId> directObjectIds = new HashSet<ObjectId>();
+
+			int tested = 0;
+			int accepted = 0;
+			int skippedBlockContainer = 0;
+			int duplicateDirectSkipped = 0;
+			int ownerRejected = 0;
+
+			foreach (WorldEntityInfo info in worldInfos)
+			{
+				tested++;
+
+				if (info.WorldBounds == null || !info.WorldBounds.IsValid)
+					continue;
+
+				double overlapArea =
+					frameBounds.GetIntersectionArea(info.WorldBounds);
+
+				double ratioByEntity =
+					info.WorldBounds.Area > 0
+						? overlapArea / info.WorldBounds.Area
+						: 0.0;
+
+				bool centerInside =
+					frameBounds.ContainsPoint(info.WorldBounds.CenterPoint);
+
+				bool keep =
+					centerInside || ratioByEntity >= 0.50;
+
+				if (!keep)
+					continue;
+
+				if (info.EntityType == "BlockReference")
+				{
+					skippedBlockContainer++;
+					continue;
+				}
+
+				if (info.BlockDepth > 0 && !info.OwnerBlockReferenceId.IsNull)
+				{
+					Entity ownerBrEntity =
+						tr.GetObject(info.OwnerBlockReferenceId, OpenMode.ForRead) as Entity;
+
+					Bounds2D ownerBounds =
+						ownerBrEntity != null
+							? BricscadEntityTools.GetEntityBoundsSafe(ownerBrEntity)
+							: null;
+
+					double ownerOverlapArea =
+						ownerBounds != null
+							? frameBounds.GetIntersectionArea(ownerBounds)
+							: 0.0;
+
+					double ownerRatio =
+						ownerBounds != null && ownerBounds.Area > 0
+							? ownerOverlapArea / ownerBounds.Area
+							: 0.0;
+
+					bool ownerCenterInside =
+						ownerBounds != null &&
+						frameBounds.ContainsPoint(ownerBounds.CenterPoint);
+
+					if (!(ownerCenterInside || ownerRatio >= 0.80))
+					{
+						ownerRejected++;
+						continue;
+					}
+				}
+				else
+				{
+					if (directObjectIds.Contains(info.SourceId))
+					{
+						duplicateDirectSkipped++;
+						continue;
+					}
+
+					directObjectIds.Add(info.SourceId);
+				}
+
+				result.Add(info);
+				accepted++;
+			}
+
+			ed.WriteMessage(
+				"\n[WorldOwnership] Tested=" + tested +
+				", Accepted=" + accepted +
+				", SkippedBlockContainer=" + skippedBlockContainer +
+				", DuplicateDirectSkipped=" + duplicateDirectSkipped +
+				", OwnerRejected=" + ownerRejected +
+				", FinalWorldInfos=" + result.Count);
+
+			return result;
+		}
+
+		private static void PrintWorldEntitySummary(Editor ed, List<WorldEntityInfo> infos)
+		{
+			Dictionary<string, int> typeCounts = new Dictionary<string, int>();
+			Dictionary<string, int> layerCounts = new Dictionary<string, int>();
+
+			foreach (WorldEntityInfo info in infos)
+			{
+				string type = info.EntityType ?? "(null)";
+				string layer = info.Layer ?? "(null)";
+
+				if (!typeCounts.ContainsKey(type))
+					typeCounts[type] = 0;
+
+				typeCounts[type]++;
+
+				if (!layerCounts.ContainsKey(layer))
+					layerCounts[layer] = 0;
+
+				layerCounts[layer]++;
+			}
+
+			ed.WriteMessage("\n[ContentSummary] Type Counts:");
+
+			foreach (KeyValuePair<string, int> kv in typeCounts)
+			{
+				ed.WriteMessage(
+					"\n  Type=" + kv.Key + ", Count=" + kv.Value);
+			}
+
+			ed.WriteMessage("\n[ContentSummary] Layer Counts:");
+
+			foreach (KeyValuePair<string, int> kv in layerCounts)
+			{
+				ed.WriteMessage(
+					"\n  Layer=" + kv.Key + ", Count=" + kv.Value);
 			}
 		}
 

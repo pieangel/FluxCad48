@@ -362,6 +362,57 @@ namespace FluxCad48.Brics
 			return NormalizeThinBounds(new Bounds2D(minX, minY, maxX, maxY));
 		}
 
+
+		public static Entity WorldCloneEntityToModelSpace(
+			Transaction tr,
+			Database db,
+			BlockTableRecord modelSpace,
+			WorldEntityInfo info,
+			Vector3d displacement,
+			string targetLayerName)
+		{
+			if (tr == null || db == null || modelSpace == null || info == null)
+				return null;
+
+			Entity sourceEntity =
+				tr.GetObject(info.SourceId, OpenMode.ForRead) as Entity;
+
+			if (sourceEntity == null)
+				return null;
+
+			Entity clonedEntity = null;
+
+			try
+			{
+				clonedEntity = sourceEntity.Clone() as Entity;
+
+				if (clonedEntity == null)
+					return null;
+
+				if (!string.IsNullOrEmpty(targetLayerName))
+				{
+					EnsureLayer(tr, db, targetLayerName);
+					clonedEntity.Layer = targetLayerName;
+				}
+
+				clonedEntity.TransformBy(info.AccumulatedTransform);
+				clonedEntity.TransformBy(Matrix3d.Displacement(displacement));
+
+				modelSpace.AppendEntity(clonedEntity);
+				tr.AddNewlyCreatedDBObject(clonedEntity, true);
+
+				return clonedEntity;
+			}
+			catch
+			{
+				if (clonedEntity != null && !clonedEntity.IsDisposed)
+					clonedEntity.Dispose();
+
+				return null;
+			}
+		}
+
+
 		//선처럼 얇은 객체도 Bounds 판정에서 탈락하지 않게 최소 두께를 부여
 		public static Bounds2D NormalizeThinBounds(Bounds2D b)
 		{
