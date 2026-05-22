@@ -76,8 +76,8 @@ namespace FluxCad48.Commands
 		}
 
 		private static bool CopyPickedFrameToRightOnce(
-	Document doc,
-	ObjectId frameId)
+			Document doc,
+			ObjectId frameId)
 		{
 			Database db = doc.Database;
 			Editor ed = doc.Editor;
@@ -173,6 +173,20 @@ namespace FluxCad48.Commands
 
 				foreach (SheetPlacement placement in placements)
 				{
+					CopiedSheetInfo sheetInfo = new CopiedSheetInfo();
+					sheetInfo.CopyGroupId = FluxCopyGroupIdGenerator.NewSheetCopyGroupId();
+					sheetInfo.SourceKind = "OriginalFrame";
+					sheetInfo.SourceFrameHandle = frameEntity.Handle.ToString();
+					sheetInfo.SourceFrameBounds = frameBounds;
+					sheetInfo.CopiedFrameBounds =
+						placement.SourceBounds.Offset(
+							placement.MoveX,
+							placement.MoveY);
+					sheetInfo.PlacementOffset = new Vector3d(placement.MoveX, placement.MoveY, 0);
+					sheetInfo.Generation = 1;
+
+					FluxXDataTools.EnsureRegApp(tr, db);
+
 					int clonedCount = 0;
 					int failedCount = 0;
 
@@ -195,6 +209,12 @@ namespace FluxCad48.Commands
 							failedCount++;
 							continue;
 						}
+
+						FluxXDataTools.SetCopiedSheetEntityXData(
+							clonedEntity,
+							sheetInfo);
+
+						sheetInfo.CopiedEntityIds.Add(clonedEntity.ObjectId);
 
 						clonedCount++;
 					}
@@ -219,7 +239,18 @@ namespace FluxCad48.Commands
 
 						modelSpace.AppendEntity(marker);
 						tr.AddNewlyCreatedDBObject(marker, true);
+
+						FluxXDataTools.SetCopiedSheetMarkerXData(
+							marker,
+							sheetInfo);
+
+						sheetInfo.MarkerId = marker.ObjectId;
 					}
+
+					ed.WriteMessage(
+						"\n[SheetCopyTrack] GroupId=" + sheetInfo.CopyGroupId +
+						", SourceFrame=" + sheetInfo.SourceFrameHandle +
+						", Entities=" + sheetInfo.CopiedEntityIds.Count);
 				}
 
 				tr.Commit();

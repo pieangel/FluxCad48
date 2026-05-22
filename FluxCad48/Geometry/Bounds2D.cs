@@ -227,5 +227,17 @@ namespace FluxCad48.Geometry
 				   other.MinY >= this.MinY - tolerance &&
 				   other.MaxY <= this.MaxY + tolerance;
 		}
+
+		public Bounds2D Offset(double dx, double dy)
+		{
+			if (!IsValid)
+				return new Bounds2D();
+
+			return new Bounds2D(
+				MinX + dx,
+				MinY + dy,
+				MaxX + dx,
+				MaxY + dy);
+		}
 	}
 }
