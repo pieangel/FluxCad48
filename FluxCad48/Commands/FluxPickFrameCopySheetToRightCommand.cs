@@ -17,6 +17,103 @@ namespace FluxCad48.Commands
 		private const string CopiedLayerName = "FLUX_COPIED";
 		private const string MarkerLayerName = "FLUX_MARKER";
 
+		[CommandMethod("FLUX_SELECT_COPIED_SHEET_BY_ENTITY")]
+		public void FluxSelectCopiedSheetByEntity()
+		{
+			Document doc = Application.DocumentManager.MdiActiveDocument;
+			Database db = doc.Database;
+			Editor ed = doc.Editor;
+
+			PromptEntityOptions peo = new PromptEntityOptions(
+				"\n복사된 쉬트에 속한 개체 또는 Marker를 선택하세요: ");
+
+			peo.AllowNone = false;
+
+			PromptEntityResult per = ed.GetEntity(peo);
+
+			if (per.Status != PromptStatus.OK)
+			{
+				ed.WriteMessage("\n선택이 취소되었습니다.");
+				return;
+			}
+
+			using (Transaction tr = db.TransactionManager.StartTransaction())
+			{
+				Entity pickedEntity =
+					tr.GetObject(per.ObjectId, OpenMode.ForRead) as Entity;
+
+				if (pickedEntity == null)
+				{
+					ed.WriteMessage("\n선택한 객체가 Entity가 아닙니다.");
+					return;
+				}
+
+				string copyGroupId =
+					FluxXDataTools.GetCopyGroupId(pickedEntity);
+
+				if (string.IsNullOrWhiteSpace(copyGroupId))
+				{
+					ed.WriteMessage("\n선택한 객체에는 COPY_GROUP_ID가 없습니다.");
+					return;
+				}
+
+				BlockTable bt =
+					(BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+
+				BlockTableRecord modelSpace =
+					(BlockTableRecord)tr.GetObject(
+						bt[BlockTableRecord.ModelSpace],
+						OpenMode.ForRead);
+
+				ObjectIdCollection ids = new ObjectIdCollection();
+
+				foreach (ObjectId id in modelSpace)
+				{
+					Entity entity = tr.GetObject(id, OpenMode.ForRead) as Entity;
+
+					if (entity == null)
+						continue;
+
+					string role = FluxXDataTools.GetFluxXDataValue(entity, "ROLE");
+
+					if (role == "CopiedSheetMarker")
+						continue;
+
+					string entityGroupId =
+						FluxXDataTools.GetCopyGroupId(entity);
+
+					if (entityGroupId == copyGroupId)
+						ids.Add(id);
+				}
+
+				if (ids.Count == 0)
+				{
+					ed.WriteMessage(
+						"\n[SelectCopiedSheet] 같은 COPY_GROUP_ID를 가진 개체를 찾지 못했습니다.");
+					tr.Commit();
+					return;
+				}
+
+				ObjectId[] idArray = new ObjectId[ids.Count];
+
+				for (int i = 0; i < ids.Count; i++)
+				{
+					idArray[i] = ids[i];
+				}
+
+				SelectionSet selectionSet =
+					SelectionSet.FromObjectIds(idArray);
+
+				ed.SetImpliedSelection(selectionSet);
+
+				ed.WriteMessage(
+					"\n[SelectCopiedSheet] COPY_GROUP_ID=" + copyGroupId +
+					", Selected=" + ids.Count);
+
+				tr.Commit();
+			}
+		}
+
 		[CommandMethod("FLUX_DEBUG_COPIED_SHEET_INFO")]
 		public void FluxDebugCopiedSheetInfo()
 		{

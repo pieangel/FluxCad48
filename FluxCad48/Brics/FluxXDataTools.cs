@@ -93,5 +93,20 @@ namespace FluxCad48.Brics
 
 			return result;
 		}
+
+		public static string GetFluxXDataValue(Entity entity, string key)
+		{
+			Dictionary<string, string> xdata = GetFluxXData(entity);
+
+			if (xdata.ContainsKey(key))
+				return xdata[key];
+
+			return null;
+		}
+
+		public static string GetCopyGroupId(Entity entity)
+		{
+			return GetFluxXDataValue(entity, "COPY_GROUP_ID");
+		}
 	}
 }

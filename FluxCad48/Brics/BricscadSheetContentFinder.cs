@@ -28,6 +28,11 @@ namespace FluxCad48.Brics
 			{
 				Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
 
+				string role = FluxXDataTools.GetFluxXDataValue(ent, "ROLE");
+
+				if (role == "CopiedSheetMarker")
+					continue;
+
 				if (ent == null)
 					continue;
 
