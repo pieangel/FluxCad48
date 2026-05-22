@@ -17,6 +17,62 @@ namespace FluxCad48.Commands
 		private const string CopiedLayerName = "FLUX_COPIED";
 		private const string MarkerLayerName = "FLUX_MARKER";
 
+		[CommandMethod("FLUX_DEBUG_COPIED_SHEET_INFO")]
+		public void FluxDebugCopiedSheetInfo()
+		{
+			Document doc = Application.DocumentManager.MdiActiveDocument;
+			Database db = doc.Database;
+			Editor ed = doc.Editor;
+
+			PromptEntityOptions peo = new PromptEntityOptions(
+				"\n복사된 쉬트 개체 또는 마커를 선택하세요: ");
+
+			peo.AllowNone = false;
+
+			PromptEntityResult per = ed.GetEntity(peo);
+
+			if (per.Status != PromptStatus.OK)
+			{
+				ed.WriteMessage("\n선택이 취소되었습니다.");
+				return;
+			}
+
+			using (Transaction tr = db.TransactionManager.StartTransaction())
+			{
+				Entity entity = tr.GetObject(per.ObjectId, OpenMode.ForRead) as Entity;
+
+				if (entity == null)
+				{
+					ed.WriteMessage("\n선택한 객체가 Entity가 아닙니다.");
+					return;
+				}
+
+				Dictionary<string, string> xdata =
+					FluxXDataTools.GetFluxXData(entity);
+
+				ed.WriteMessage("\n[CopiedSheetInfo]");
+				ed.WriteMessage("\n  ObjectId=" + entity.ObjectId);
+				ed.WriteMessage("\n  Handle=" + entity.Handle);
+				ed.WriteMessage("\n  Type=" + entity.GetType().Name);
+				ed.WriteMessage("\n  Layer=" + entity.Layer);
+
+				if (xdata.Count == 0)
+				{
+					ed.WriteMessage("\n  FLUXCAD XData 없음");
+					tr.Commit();
+					return;
+				}
+
+				foreach (KeyValuePair<string, string> pair in xdata)
+				{
+					ed.WriteMessage(
+						"\n  " + pair.Key + " = " + pair.Value);
+				}
+
+				tr.Commit();
+			}
+		}
+
 		[CommandMethod("FLUX_PICK_FRAME_COPY_SHEET_TO_RIGHT_V2")]
 		public void FluxPickFrameCopySheetToRightV2()
 		{

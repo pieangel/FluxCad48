@@ -1,4 +1,5 @@
 ﻿using FluxCad48.Sheets;
+using System.Collections.Generic;
 using Teigha.DatabaseServices;
 using Teigha.Runtime;
 
@@ -55,6 +56,42 @@ namespace FluxCad48.Brics
 			);
 
 			marker.XData = rb;
+		}
+
+		public static Dictionary<string, string> GetFluxXData(Entity entity)
+		{
+			Dictionary<string, string> result = new Dictionary<string, string>();
+
+			if (entity == null)
+				return result;
+
+			ResultBuffer rb = entity.GetXDataForApplication(AppName);
+
+			if (rb == null)
+				return result;
+
+			foreach (TypedValue tv in rb)
+			{
+				if (tv.TypeCode != (int)DxfCode.ExtendedDataAsciiString)
+					continue;
+
+				string text = tv.Value as string;
+
+				if (string.IsNullOrWhiteSpace(text))
+					continue;
+
+				int index = text.IndexOf('=');
+
+				if (index <= 0)
+					continue;
+
+				string key = text.Substring(0, index);
+				string value = text.Substring(index + 1);
+
+				result[key] = value;
+			}
+
+			return result;
 		}
 	}
 }
