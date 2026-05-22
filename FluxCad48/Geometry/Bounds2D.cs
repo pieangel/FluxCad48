@@ -240,6 +240,13 @@ namespace FluxCad48.Geometry
 				MaxY + dy);
 		}
 
+		public bool Contains_Old(Point2D p)
+		{
+			return p.X >= MinX && p.X <= MaxX &&
+				   p.Y >= MinY && p.Y <= MaxY;
+		}
+
+
 		public Point2D Center
 		{
 			get
@@ -252,8 +259,45 @@ namespace FluxCad48.Geometry
 
 		public bool Contains(Point2D p)
 		{
+			if (!IsValid)
+				return false;
+
 			return p.X >= MinX && p.X <= MaxX &&
 				   p.Y >= MinY && p.Y <= MaxY;
+		}
+
+		public double ContainedRatioIn(Bounds2D parent)
+		{
+			if (parent == null || !IsValid || !parent.IsValid)
+				return 0.0;
+
+			double area = Area;
+			if (area <= 0.0)
+				return 0.0;
+
+			return IntersectionArea(parent) / area;
+		}
+
+		public double OverlapRatioWith(Bounds2D other)
+		{
+			if (other == null || !IsValid || !other.IsValid)
+				return 0.0;
+
+			double smallerArea = Math.Min(Area, other.Area);
+			if (smallerArea <= 0.0)
+				return 0.0;
+
+			return IntersectionArea(other) / smallerArea;
+		}
+
+		public bool IsMostlyContainedIn(Bounds2D parent, double ratio)
+		{
+			return ContainedRatioIn(parent) >= ratio;
+		}
+
+		public bool IsOverlappingSignificantly(Bounds2D other, double ratio)
+		{
+			return OverlapRatioWith(other) >= ratio;
 		}
 	}
 }

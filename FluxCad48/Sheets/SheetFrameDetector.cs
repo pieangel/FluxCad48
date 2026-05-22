@@ -51,9 +51,17 @@ namespace FluxCad48.Sheets
 				});
 			}
 
+			ed?.WriteMessage($"\n[FrameDetect] RawCandidates={candidates.Count}");
+
 			candidates = RemoveDuplicateFrames(candidates);
 
-			return candidates
+			ed?.WriteMessage($"\n[FrameDetect] AfterDuplicateFilter={candidates.Count}");
+
+			var filtered = ResolveOverlappingFrameCandidates(candidates);
+
+			ed?.WriteMessage($"\n[FrameDetect] AfterOverlapFilter={filtered.Count}");
+
+			return filtered
 				.OrderBy(f => f.Bounds.MinY)
 				.ThenBy(f => f.Bounds.MinX)
 				.ToList();
@@ -194,6 +202,51 @@ namespace FluxCad48.Sheets
 				   Math.Abs(a.MinY - b.MinY) < tol &&
 				   Math.Abs(a.MaxX - b.MaxX) < tol &&
 				   Math.Abs(a.MaxY - b.MaxY) < tol;
+		}
+
+		private static List<SheetFrameCandidate> ResolveOverlappingFrameCandidates(
+			List<SheetFrameCandidate> candidates)
+		{
+			var result = new List<SheetFrameCandidate>();
+
+			for (int i = 0; i < candidates.Count; i++)
+			{
+				SheetFrameCandidate child = candidates[i];
+
+				bool nested = false;
+				string parentHandle = "";
+
+				for (int j = 0; j < candidates.Count; j++)
+				{
+					if (i == j)
+						continue;
+
+					SheetFrameCandidate parent = candidates[j];
+
+					if (child.Bounds == null || parent.Bounds == null)
+						continue;
+
+					if (parent.Bounds.Area <= child.Bounds.Area)
+						continue;
+
+					double ratio = child.Bounds.ContainedRatioIn(parent.Bounds);
+
+					if (ratio >= 0.90)
+					{
+						nested = true;
+						parentHandle = parent.Handle;
+						break;
+					}
+				}
+
+				child.IsNestedCandidate = nested;
+				child.ParentHandle = parentHandle;
+
+				if (!nested)
+					result.Add(child);
+			}
+
+			return result;
 		}
 	}
 }

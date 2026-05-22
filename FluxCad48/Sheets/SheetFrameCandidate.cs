@@ -21,6 +21,9 @@ namespace FluxCad48.Sheets
 
 		public bool HasEssentialDrawingFeatures { get; set; }
 
+		public bool IsNestedCandidate { get; set; }
+		public string ParentHandle { get; set; } = "";
+
 		public double Score { get; set; }
 	}
 }
