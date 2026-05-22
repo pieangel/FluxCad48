@@ -17,27 +17,70 @@ namespace FluxCad48.Commands
 		private const string CopiedLayerName = "FLUX_COPIED";
 		private const string MarkerLayerName = "FLUX_MARKER";
 
-		[CommandMethod("FLUX_PICK_FRAME_COPY_SHEET_TO_RIGHT")]
-		public void FluxPickFrameCopySheetToRight()
+		[CommandMethod("FLUX_PICK_FRAME_COPY_SHEET_TO_RIGHT_V2")]
+		public void FluxPickFrameCopySheetToRightV2()
 		{
 			Document doc = Application.DocumentManager.MdiActiveDocument;
-			Database db = doc.Database;
 			Editor ed = doc.Editor;
 
-			PromptEntityOptions peo = new PromptEntityOptions(
-				"\n오른쪽으로 복사할 쉬트의 프레임을 클릭하세요: ");
+			int successCount = 0;
+			int failCount = 0;
 
-			peo.AllowNone = false;
+			ed.WriteMessage(
+				"\n[FramePickV2] 연속 프레임 복사를 시작합니다. 종료하려면 ESC를 누르세요.");
 
-			PromptEntityResult per = ed.GetEntity(peo);
-
-			if (per.Status != PromptStatus.OK)
+			while (true)
 			{
-				ed.WriteMessage("\n프레임 선택이 완료되지 않았습니다.");
-				return;
+				PromptEntityOptions peo = new PromptEntityOptions(
+					"\n오른쪽으로 복사할 쉬트의 프레임을 클릭하세요. 종료하려면 ESC: ");
+
+				peo.AllowNone = false;
+
+				PromptEntityResult per = ed.GetEntity(peo);
+
+				if (per.Status == PromptStatus.Cancel)
+				{
+					ed.WriteMessage(
+						"\n[FramePickV2] ESC 입력으로 연속 복사를 종료합니다.");
+					break;
+				}
+
+				if (per.Status != PromptStatus.OK)
+				{
+					ed.WriteMessage(
+						"\n[FramePickV2] 선택이 완료되지 않았습니다. 명령을 종료합니다.");
+					break;
+				}
+
+				try
+				{
+					bool ok = CopyPickedFrameToRightOnce(doc, per.ObjectId);
+
+					if (ok)
+						successCount++;
+					else
+						failCount++;
+				}
+				catch (System.Exception ex)
+				{
+					failCount++;
+
+					ed.WriteMessage(
+						"\n[FramePickV2][Error] " + ex.Message);
+				}
 			}
 
-			ObjectId frameId = per.ObjectId;
+			ed.WriteMessage(
+				"\n[FramePickV2] 완료. Success=" + successCount +
+				", Failed=" + failCount);
+		}
+
+		private static bool CopyPickedFrameToRightOnce(
+	Document doc,
+	ObjectId frameId)
+		{
+			Database db = doc.Database;
+			Editor ed = doc.Editor;
 
 			using (Transaction tr = db.TransactionManager.StartTransaction())
 			{
@@ -46,23 +89,25 @@ namespace FluxCad48.Commands
 				if (frameEntity == null)
 				{
 					ed.WriteMessage("\n선택한 객체가 Entity가 아닙니다.");
-					return;
+					return false;
 				}
 
-				Bounds2D frameBounds = BricscadEntityTools.GetEntityBounds(tr, frameId);
+				Bounds2D frameBounds =
+					BricscadEntityTools.GetEntityBounds(tr, frameId);
 
 				if (frameBounds == null || !frameBounds.IsValid)
 				{
 					ed.WriteMessage("\n선택한 프레임의 Bounds를 계산하지 못했습니다.");
-					return;
+					return false;
 				}
 
-				Bounds2D drawingBounds = BricscadEntityTools.GetModelSpaceBounds(tr, db);
+				Bounds2D drawingBounds =
+					BricscadEntityTools.GetModelSpaceBounds(tr, db);
 
 				if (drawingBounds == null || !drawingBounds.IsValid)
 				{
 					ed.WriteMessage("\n전체 도면 Bounds를 계산하지 못했습니다.");
-					return;
+					return false;
 				}
 
 				ed.WriteMessage(
@@ -85,7 +130,7 @@ namespace FluxCad48.Commands
 				if (acceptedInfos.Count == 0)
 				{
 					ed.WriteMessage("\n복사할 내부 객체를 찾지 못했습니다.");
-					return;
+					return false;
 				}
 
 				PrintWorldEntitySummary(ed, acceptedInfos);
@@ -115,9 +160,13 @@ namespace FluxCad48.Commands
 						drawingBounds,
 						options);
 
-				BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+				BlockTable bt =
+					(BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+
 				BlockTableRecord modelSpace =
-					(BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+					(BlockTableRecord)tr.GetObject(
+						bt[BlockTableRecord.ModelSpace],
+						OpenMode.ForWrite);
 
 				BricscadEntityTools.EnsureLayer(tr, db, CopiedLayerName);
 				BricscadEntityTools.EnsureLayer(tr, db, MarkerLayerName);
@@ -159,9 +208,12 @@ namespace FluxCad48.Commands
 					if (options.DrawYellowMarkerOnSource)
 					{
 						Polyline marker =
-							BricscadEntityTools.CreateRectanglePolyline(placement.SourceBounds);
+							BricscadEntityTools.CreateRectanglePolyline(
+								placement.SourceBounds);
 
-						marker.Color = Color.FromColorIndex(ColorMethod.ByAci, 2);
+						marker.Color =
+							Color.FromColorIndex(ColorMethod.ByAci, 2);
+
 						marker.LineWeight = LineWeight.LineWeight050;
 						marker.Layer = MarkerLayerName;
 
@@ -171,10 +223,34 @@ namespace FluxCad48.Commands
 				}
 
 				tr.Commit();
-
-				ed.WriteMessage(
-					"\nFLUX_PICK_FRAME_COPY_SHEET_TO_RIGHT 완료: WorldClone 방식으로 선택 프레임 내부 쉬트를 오른쪽에 복사했습니다.");
 			}
+
+			ed.WriteMessage(
+				"\nFLUX_PICK_FRAME_COPY_SHEET_TO_RIGHT_V2: 1개 프레임 복사 완료.");
+
+			return true;
+		}
+
+		[CommandMethod("FLUX_PICK_FRAME_COPY_SHEET_TO_RIGHT")]
+		public void FluxPickFrameCopySheetToRight()
+		{
+			Document doc = Application.DocumentManager.MdiActiveDocument;
+			Editor ed = doc.Editor;
+
+			PromptEntityOptions peo = new PromptEntityOptions(
+				"\n오른쪽으로 복사할 쉬트의 프레임을 클릭하세요: ");
+
+			peo.AllowNone = false;
+
+			PromptEntityResult per = ed.GetEntity(peo);
+
+			if (per.Status != PromptStatus.OK)
+			{
+				ed.WriteMessage("\n프레임 선택이 완료되지 않았습니다.");
+				return;
+			}
+
+			CopyPickedFrameToRightOnce(doc, per.ObjectId);
 		}
 
 		private static List<WorldEntityInfo> CollectOwnedWorldEntities(
