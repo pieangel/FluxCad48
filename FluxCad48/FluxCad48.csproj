@@ -100,6 +100,7 @@
     <Compile Include="Commands\Commands.cs" />
     <Compile Include="Commands\FluxCopySelectedSheetsToRightCommand.cs" />
     <Compile Include="Commands\FluxDebugSelectedCoordsDeepCommand.cs" />
+    <Compile Include="Commands\FluxDebugSelectedSheetUnitsCommand.cs" />
     <Compile Include="Commands\FluxDetectSelectedSheetFramesCommand.cs" />
     <Compile Include="Commands\FluxPickFrameCopySheetToRightCommand.cs" />
     <Compile Include="Geometry\Bounds2D.cs" />
@@ -109,6 +110,7 @@
     <Compile Include="Sheets\CopiedSheetInfo.cs" />
     <Compile Include="Sheets\FluxCopyGroupIdGenerator.cs" />
     <Compile Include="Sheets\SelectedSheetUnitInfo.cs" />
+    <Compile Include="Sheets\SelectedSheetUnitInfoBuilder.cs" />
     <Compile Include="Sheets\SheetArrangeOptions.cs" />
     <Compile Include="Sheets\SheetArranger.cs" />
     <Compile Include="Sheets\SheetFrameCandidate.cs" />

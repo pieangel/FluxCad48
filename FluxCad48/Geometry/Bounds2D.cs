@@ -239,5 +239,21 @@ namespace FluxCad48.Geometry
 				MaxX + dx,
 				MaxY + dy);
 		}
+
+		public Point2D Center
+		{
+			get
+			{
+				return new Point2D(
+					(MinX + MaxX) * 0.5,
+					(MinY + MaxY) * 0.5);
+			}
+		}
+
+		public bool Contains(Point2D p)
+		{
+			return p.X >= MinX && p.X <= MaxX &&
+				   p.Y >= MinY && p.Y <= MaxY;
+		}
 	}
 }

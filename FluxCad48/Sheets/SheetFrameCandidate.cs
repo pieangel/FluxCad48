@@ -14,6 +14,13 @@ namespace FluxCad48.Sheets
 		public Bounds2D Bounds { get; set; }
 
 		public int InsideEntityCount { get; set; }
+
+		public int DimensionInsideCount { get; set; }
+		public int CenterLineInsideCount { get; set; }
+		public int HiddenLineInsideCount { get; set; }
+
+		public bool HasEssentialDrawingFeatures { get; set; }
+
 		public double Score { get; set; }
 	}
 }

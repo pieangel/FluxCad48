@@ -31,6 +31,7 @@ namespace FluxCad48.Commands
 			using (Transaction tr = db.TransactionManager.StartTransaction())
 			{
 				var selectedEntities = new List<Entity>();
+				var selectedIds = new List<ObjectId>();
 
 				foreach (SelectedObject so in psr.Value)
 				{
@@ -42,18 +43,44 @@ namespace FluxCad48.Commands
 						continue;
 
 					selectedEntities.Add(ent);
+					selectedIds.Add(so.ObjectId);
 				}
 
 				ed.WriteMessage($"\n[MultiFrame] SelectedEntities={selectedEntities.Count}");
 
+				var units = SelectedSheetUnitInfoBuilder.BuildFromEntities(tr, selectedIds);
+
+				ed.WriteMessage(
+					$"\n[MultiFrame] Units={units.Count}, " +
+					$"Dim={units.Count(u => u.IsDimensionLike)}, " +
+					$"Center={units.Count(u => u.IsCenterLineLike)}, " +
+					$"Hidden={units.Count(u => u.IsHiddenLineLike)}");
+
 				var frames = SheetFrameDetector.Detect(selectedEntities, ed);
 
-				ed.WriteMessage($"\n[MultiFrame] DetectedFrames={frames.Count}");
+				ed.WriteMessage($"\n[MultiFrame] RawDetectedFrames={frames.Count}");
 
 				int index = 1;
 
 				foreach (var frame in frames)
 				{
+					int dimInside = units.Count(u =>
+						u.IsDimensionLike &&
+						frame.Bounds.Contains(u.CenterWcs));
+
+					int centerInside = units.Count(u =>
+						u.IsCenterLineLike &&
+						frame.Bounds.Contains(u.CenterWcs));
+
+					int hiddenInside = units.Count(u =>
+						u.IsHiddenLineLike &&
+						frame.Bounds.Contains(u.CenterWcs));
+
+					bool hasEssentialFeatures =
+						dimInside > 0 ||
+						centerInside > 0 ||
+						hiddenInside > 0;
+
 					ed.WriteMessage(
 						$"\n[Frame {index}] " +
 						$"Handle={frame.Handle}, " +
@@ -61,6 +88,10 @@ namespace FluxCad48.Commands
 						$"Layer={frame.Layer}, " +
 						$"Bounds={frame.Bounds}, " +
 						$"Inside={frame.InsideEntityCount}, " +
+						$"Dim={dimInside}, " +
+						$"Center={centerInside}, " +
+						$"Hidden={hiddenInside}, " +
+						$"Essential={hasEssentialFeatures}, " +
 						$"Score={frame.Score:0.00}");
 
 					index++;
