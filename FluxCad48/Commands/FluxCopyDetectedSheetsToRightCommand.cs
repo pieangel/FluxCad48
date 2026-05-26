@@ -25,15 +25,37 @@ namespace FluxCad48.Commands
 			Database db = doc.Database;
 			Editor ed = doc.Editor;
 
-			PromptSelectionOptions pso = new PromptSelectionOptions();
-			pso.MessageForAdding =
-				"\n오른쪽으로 복사할 쉬트 프레임들을 드래그 선택하세요: ";
+			PromptPointOptions ppo1 = new PromptPointOptions(
+				"\n복사할 쉬트 영역의 첫 번째 구석점을 지정하세요: ");
 
-			PromptSelectionResult psr = ed.GetSelection(pso);
+			PromptPointResult ppr1 = ed.GetPoint(ppo1);
+
+			if (ppr1.Status != PromptStatus.OK)
+			{
+				ed.WriteMessage("\n첫 번째 점 선택이 취소되었습니다.");
+				return;
+			}
+
+			PromptCornerOptions pco = new PromptCornerOptions(
+				"\n반대 구석점을 지정하세요: ",
+				ppr1.Value);
+
+			PromptPointResult ppr2 = ed.GetCorner(pco);
+
+			if (ppr2.Status != PromptStatus.OK)
+			{
+				ed.WriteMessage("\n반대 구석점 선택이 취소되었습니다.");
+				return;
+			}
+
+			PromptSelectionResult psr =
+				ed.SelectCrossingWindow(
+					ppr1.Value,
+					ppr2.Value);
 
 			if (psr.Status != PromptStatus.OK)
 			{
-				ed.WriteMessage("\n선택이 완료되지 않았습니다.");
+				ed.WriteMessage("\n선택된 객체가 없습니다.");
 				return;
 			}
 
