@@ -255,6 +255,45 @@ namespace FluxCad48.Commands
 			}
 		}
 
+		private static Bounds2D GetBoundsFromObjectIds(
+			Transaction tr,
+			ObjectId[] ids)
+		{
+			Bounds2D result = null;
+
+			foreach (ObjectId id in ids)
+			{
+				Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+
+				if (ent == null)
+					continue;
+
+				Bounds2D b = BricscadEntityTools.GetEntityBounds(ent);
+
+				if (b == null || !b.IsValid)
+					continue;
+
+				if (result == null)
+				{
+					result = new Bounds2D(
+						b.MinX,
+						b.MinY,
+						b.MaxX,
+						b.MaxY);
+				}
+				else
+				{
+					result = new Bounds2D(
+						System.Math.Min(result.MinX, b.MinX),
+						System.Math.Min(result.MinY, b.MinY),
+						System.Math.Max(result.MaxX, b.MaxX),
+						System.Math.Max(result.MaxY, b.MaxY));
+				}
+			}
+
+			return result;
+		}
+
 		private static List<SheetRegion> BuildSheetRegionsFromDetectedFrames(
 			Transaction tr,
 			ObjectId[] selectedIds,
