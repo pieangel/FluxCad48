@@ -97,7 +97,7 @@ namespace FluxCad48.Commands
 				List<SheetRegion> sheets =
 					BuildSheetRegionsFromDetectedFrames(
 						tr,
-						selectedIds,
+						db,
 						frames,
 						nextSheetIndex,
 						ed);
@@ -187,7 +187,7 @@ namespace FluxCad48.Commands
 						clonedEntity.TransformBy(
 							Matrix3d.Displacement(displacement));
 
-						clonedEntity.Layer = CopiedLayerName;
+						//clonedEntity.Layer = CopiedLayerName;
 						SetSheetCodeXData(tr, db, clonedEntity, sheetCode);
 
 						clonedCount++;
@@ -294,21 +294,90 @@ namespace FluxCad48.Commands
 			return result;
 		}
 
+		private static List<SheetFrameCandidate> SortFramesTopToBottomLeftToRight(
+			List<SheetFrameCandidate> frames)
+		{
+			if (frames == null || frames.Count == 0)
+				return new List<SheetFrameCandidate>();
+
+			var ordered = frames
+				.OrderByDescending(f => f.Bounds.Center.Y)
+				.ThenBy(f => f.Bounds.MinX)
+				.ToList();
+
+			var rows = new List<List<SheetFrameCandidate>>();
+
+			foreach (SheetFrameCandidate frame in ordered)
+			{
+				double cy = frame.Bounds.Center.Y;
+
+				List<SheetFrameCandidate> targetRow = null;
+
+				foreach (List<SheetFrameCandidate> row in rows)
+				{
+					double rowCenterY = row.Average(f => f.Bounds.Center.Y);
+					double rowMaxHeight = row.Max(f => f.Bounds.Height);
+
+					double tolerance = rowMaxHeight * 0.5;
+
+					if (System.Math.Abs(cy - rowCenterY) <= tolerance)
+					{
+						targetRow = row;
+						break;
+					}
+				}
+
+				if (targetRow == null)
+				{
+					targetRow = new List<SheetFrameCandidate>();
+					rows.Add(targetRow);
+				}
+
+				targetRow.Add(frame);
+			}
+
+			var result = new List<SheetFrameCandidate>();
+
+			foreach (List<SheetFrameCandidate> row in rows)
+			{
+				row.Sort((a, b) => a.Bounds.MinX.CompareTo(b.Bounds.MinX));
+
+				foreach (SheetFrameCandidate frame in row)
+					result.Add(frame);
+			}
+
+			return result;
+		}
+
 		private static List<SheetRegion> BuildSheetRegionsFromDetectedFrames(
 			Transaction tr,
-			ObjectId[] selectedIds,
+			Database db,
 			List<SheetFrameCandidate> frames,
 			int startIndex,
 			Editor ed)
-		{ 
+		{
 			var result = new List<SheetRegion>();
+
+			frames = SortFramesTopToBottomLeftToRight(frames);
+
+
+			BlockTable bt =
+				(BlockTable)tr.GetObject(
+					db.BlockTableId,
+					OpenMode.ForRead);
+
+			BlockTableRecord modelSpace =
+				(BlockTableRecord)tr.GetObject(
+					bt[BlockTableRecord.ModelSpace],
+					OpenMode.ForRead);
+
 
 			foreach (SheetFrameCandidate frame in frames)
 			{
 				SheetRegion sheet = new SheetRegion();
 				sheet.Bounds = frame.Bounds;
 
-				foreach (ObjectId id in selectedIds)
+				foreach (ObjectId id in modelSpace)
 				{
 					Entity ent =
 						tr.GetObject(id, OpenMode.ForRead) as Entity;
@@ -322,17 +391,15 @@ namespace FluxCad48.Commands
 					if (b == null || !b.IsValid)
 						continue;
 
-					if (frame.Bounds.Contains(b.Center))
+					if (IsEntityInsideSheetFrame(frame.Bounds, b))
 						sheet.EntityIds.Add(id);
 				}
 
-				if (sheet.EntityIds.Count < 20)
+				if (sheet.EntityIds.Count == 0)
 				{
 					ed.WriteMessage(
-						"\n[DetectedSheetCopy] SkipSmallSheet FrameHandle=" +
+						"\n[DetectedSheetCopy] SkipEmptySheet FrameHandle=" +
 						frame.Handle +
-						", EntityCount=" +
-						sheet.EntityIds.Count +
 						", Bounds=" +
 						sheet.Bounds);
 
@@ -356,6 +423,27 @@ namespace FluxCad48.Commands
 			}
 
 			return result;
+		}
+
+		private static bool IsValidSheetRegion(
+			SheetRegion sheet,
+			SheetFrameCandidate frame)
+		{
+			if (sheet == null)
+				return false;
+
+			if (sheet.Bounds == null || !sheet.Bounds.IsValid)
+				return false;
+
+			if (frame == null || frame.Bounds == null || !frame.Bounds.IsValid)
+				return false;
+
+			// 프레임 자체가 이미 검출되었다면 가장 강한 증거다.
+			// 내부 객체 수가 적어도 정상 쉬트일 수 있으므로 EntityCount 기준으로 버리지 않는다.
+			if (sheet.EntityIds.Count > 0)
+				return true;
+
+			return false;
 		}
 
 		private static bool IsEntityInsideSheetFrame(
