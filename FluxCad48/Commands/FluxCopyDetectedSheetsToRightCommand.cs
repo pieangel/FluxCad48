@@ -16,6 +16,7 @@ namespace FluxCad48.Commands
 	{
 		private const string CopiedLayerName = "FLUX_COPIED";
 		private const string MarkerLayerName = "FLUX_MARKER";
+		private const string SheetCodeAppName = "FLUX_SHEET";
 
 		[CommandMethod("FLUX_COPY_DETECTED_SHEETS_TO_RIGHT")]
 		public void FluxCopyDetectedSheetsToRight()
@@ -69,11 +70,14 @@ namespace FluxCad48.Commands
 					return;
 				}
 
+				int nextSheetIndex = GetNextSheetIndexFromDrawing(tr, db, ed);
+
 				List<SheetRegion> sheets =
 					BuildSheetRegionsFromDetectedFrames(
 						tr,
 						selectedIds,
 						frames,
+						nextSheetIndex,
 						ed);
 
 				ed.WriteMessage(
@@ -122,6 +126,8 @@ namespace FluxCad48.Commands
 
 				foreach (SheetPlacement placement in placements)
 				{
+					string sheetCode = GetSheetCode(placement.SourceSheet);
+
 					ObjectIdCollection idsToClone =
 						new ObjectIdCollection();
 
@@ -160,6 +166,8 @@ namespace FluxCad48.Commands
 							Matrix3d.Displacement(displacement));
 
 						clonedEntity.Layer = CopiedLayerName;
+						SetSheetCodeXData(tr, db, clonedEntity, sheetCode);
+
 						clonedCount++;
 					}
 
@@ -178,6 +186,32 @@ namespace FluxCad48.Commands
 
 					modelSpace.AppendEntity(marker);
 					tr.AddNewlyCreatedDBObject(marker, true);
+
+					DBText sourceLabel =
+						CreateSheetCodeText(
+							placement.SourceBounds,
+							0,
+							0,
+							sheetCode,
+							MarkerLayerName,
+							2);
+
+					modelSpace.AppendEntity(sourceLabel);
+					tr.AddNewlyCreatedDBObject(sourceLabel, true);
+					SetSheetCodeXData(tr, db, sourceLabel, sheetCode);
+
+					DBText copiedLabel =
+						CreateSheetCodeText(
+							placement.SourceBounds,
+							placement.MoveX,
+							placement.MoveY,
+							sheetCode,
+							CopiedLayerName,
+							3);
+
+					modelSpace.AppendEntity(copiedLabel);
+					tr.AddNewlyCreatedDBObject(copiedLabel, true);
+					SetSheetCodeXData(tr, db, copiedLabel, sheetCode);
 
 					ed.WriteMessage(
 						"\n[DetectedSheetCopy] Sheet=" +
@@ -203,16 +237,14 @@ namespace FluxCad48.Commands
 			Transaction tr,
 			ObjectId[] selectedIds,
 			List<SheetFrameCandidate> frames,
+			int startIndex,
 			Editor ed)
-		{
+		{ 
 			var result = new List<SheetRegion>();
-
-			int index = 0;
 
 			foreach (SheetFrameCandidate frame in frames)
 			{
 				SheetRegion sheet = new SheetRegion();
-				sheet.Index = index;
 				sheet.Bounds = frame.Bounds;
 
 				foreach (ObjectId id in selectedIds)
@@ -246,19 +278,20 @@ namespace FluxCad48.Commands
 					continue;
 				}
 
+				sheet.Index = startIndex + result.Count;
 				result.Add(sheet);
 
 				ed.WriteMessage(
-					"\n[DetectedSheetCopy] BuildSheet Index=" +
-					index +
+					"\n[DetectedSheetCopy] BuildSheet Code=" +
+					GetSheetCode(sheet) +
+					", Index=" +
+					sheet.Index +
 					", FrameHandle=" +
 					frame.Handle +
 					", EntityCount=" +
 					sheet.EntityIds.Count +
 					", Bounds=" +
 					sheet.Bounds);
-
-				index++;
 			}
 
 			return result;
@@ -367,6 +400,188 @@ namespace FluxCad48.Commands
 			}
 
 			return result;
+		}
+
+		private static string GetSheetCode(SheetRegion sheet)
+		{
+			return (sheet.Index + 1).ToString("000");
+		}
+
+		private static DBText CreateSheetCodeText(
+			Bounds2D bounds,
+			double offsetX,
+			double offsetY,
+			string sheetCode,
+			string layerName,
+			short colorIndex)
+		{
+			double baseSize = System.Math.Min(bounds.Width, bounds.Height);
+
+			double margin = baseSize * 0.04;
+
+			// 기존 0.06의 2배
+			double height = baseSize * 0.12;
+
+			if (height < 10.0)
+				height = 10.0;
+
+			if (height > 60.0)
+				height = 60.0;
+
+			DBText text = new DBText();
+			text.TextString = sheetCode;
+
+			text.Position =
+				new Point3d(
+					bounds.MinX + offsetX,
+					bounds.MaxY + margin + offsetY,
+					0);
+
+			text.Height = height;
+
+			// 글자를 조금 넓게 만들어 더 굵고 강하게 보이게 함
+			text.WidthFactor = 1.15;
+
+			text.Layer = layerName;
+			text.Color = Color.FromColorIndex(ColorMethod.ByAci, colorIndex);
+
+			return text;
+		}
+
+		private static void EnsureRegApp(
+			Transaction tr,
+			Database db,
+			string appName)
+		{
+			RegAppTable table =
+				(RegAppTable)tr.GetObject(
+					db.RegAppTableId,
+					OpenMode.ForRead);
+
+			if (table.Has(appName))
+				return;
+
+			table.UpgradeOpen();
+
+			RegAppTableRecord record = new RegAppTableRecord();
+			record.Name = appName;
+
+			table.Add(record);
+			tr.AddNewlyCreatedDBObject(record, true);
+		}
+
+		private static void SetSheetCodeXData(
+			Transaction tr,
+			Database db,
+			Entity entity,
+			string sheetCode)
+		{
+			if (entity == null)
+				return;
+
+			EnsureRegApp(tr, db, SheetCodeAppName);
+
+			ResultBuffer rb = new ResultBuffer(
+				new TypedValue(
+					(int)DxfCode.ExtendedDataRegAppName,
+					SheetCodeAppName),
+				new TypedValue(
+					(int)DxfCode.ExtendedDataAsciiString,
+					sheetCode));
+
+			entity.XData = rb;
+		}
+
+		private static int GetNextSheetIndexFromDrawing(
+			Transaction tr,
+			Database db,
+			Editor ed)
+		{
+			int maxNumber = 0;
+
+			BlockTable bt =
+				(BlockTable)tr.GetObject(
+					db.BlockTableId,
+					OpenMode.ForRead);
+
+			BlockTableRecord modelSpace =
+				(BlockTableRecord)tr.GetObject(
+					bt[BlockTableRecord.ModelSpace],
+					OpenMode.ForRead);
+
+			foreach (ObjectId id in modelSpace)
+			{
+				Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+
+				if (ent == null)
+					continue;
+
+				int number = TryReadSheetNumberFromEntity(ent);
+
+				if (number > maxNumber)
+					maxNumber = number;
+			}
+
+			ed.WriteMessage(
+				"\n[DetectedSheetCopy] ExistingMaxSheetCode=" +
+				maxNumber.ToString("000") +
+				", NextSheetCode=" +
+				(maxNumber + 1).ToString("000"));
+
+			return maxNumber;
+		}
+
+		private static int TryReadSheetNumberFromEntity(Entity ent)
+		{
+			// 일반 DBText / MText는 절대 읽지 않는다.
+			// 도면 안의 치수값, 품번, 번호, 표 번호와 충돌하기 때문.
+			return TryReadSheetNumberFromXData(ent);
+		}
+
+		private static int TryReadSheetNumberFromXData(Entity ent)
+		{
+			ResultBuffer rb = ent.GetXDataForApplication(SheetCodeAppName);
+
+			if (rb == null)
+				return 0;
+
+			TypedValue[] values = rb.AsArray();
+
+			foreach (TypedValue value in values)
+			{
+				if (value.TypeCode != (int)DxfCode.ExtendedDataAsciiString)
+					continue;
+
+				string text = value.Value as string;
+
+				int number = TryParseSheetCode(text);
+
+				if (number > 0)
+					return number;
+			}
+
+			return 0;
+		}
+
+		private static int TryParseSheetCode(string text)
+		{
+			if (string.IsNullOrWhiteSpace(text))
+				return 0;
+
+			text = text.Trim();
+
+			if (text.Length != 3)
+				return 0;
+
+			int number;
+
+			if (!int.TryParse(text, out number))
+				return 0;
+
+			if (number <= 0)
+				return 0;
+
+			return number;
 		}
 	}
 }
