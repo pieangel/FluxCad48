@@ -112,6 +112,13 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="ShapeViewAnalysis\BoundsTools.cs" />
     <Compile Include="ShapeViewAnalysis\ClosedLoopInfo.cs" />
+    <Compile Include="ShapeViewAnalysis\Loops\ClosedLoopCandidate.cs" />
+    <Compile Include="ShapeViewAnalysis\Loops\ClosedLoopExtractionResult.cs" />
+    <Compile Include="ShapeViewAnalysis\Loops\EndpointClusterResult.cs" />
+    <Compile Include="ShapeViewAnalysis\Loops\EndpointNode.cs" />
+    <Compile Include="ShapeViewAnalysis\Loops\LoopExtractionOptions.cs" />
+    <Compile Include="ShapeViewAnalysis\Loops\Segment2D.cs" />
+    <Compile Include="ShapeViewAnalysis\Loops\SegmentEndpointInfo.cs" />
     <Compile Include="ShapeViewAnalysis\SelectedShapeViewAnalysisResult.cs" />
     <Compile Include="ShapeViewAnalysis\SelectedShapeViewClassifier.cs" />
     <Compile Include="ShapeViewAnalysis\SelectedShapeViewSet.cs" />
