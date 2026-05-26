@@ -258,6 +258,15 @@ namespace FluxCad48.Sheets
 				});
 			}
 
+			List<SheetFrameCandidate> lineFrames =
+				DetectFourLineRectangleFrames(selectedEntities, ed);
+
+			candidates.AddRange(lineFrames);
+
+			ed?.WriteMessage(
+				"\n[FrameDetect] FourLineCandidates=" +
+				lineFrames.Count);
+
 			ed?.WriteMessage($"\n[FrameDetect] RawCandidates={candidates.Count}");
 
 			candidates = RemoveDuplicateFrames(candidates);
@@ -283,6 +292,278 @@ namespace FluxCad48.Sheets
 				.OrderBy(f => f.Bounds.MinY)
 				.ThenBy(f => f.Bounds.MinX)
 				.ToList();
+		}
+
+		private sealed class FrameLineInfo
+		{
+			public Entity Entity { get; set; }
+			public ObjectId ObjectId { get; set; }
+			public string Handle { get; set; }
+
+			public bool IsHorizontal { get; set; }
+			public bool IsVertical { get; set; }
+
+			public double X1 { get; set; }
+			public double X2 { get; set; }
+			public double Y1 { get; set; }
+			public double Y2 { get; set; }
+
+			public double Length
+			{
+				get
+				{
+					if (IsHorizontal)
+						return X2 - X1;
+
+					return Y2 - Y1;
+				}
+			}
+
+			public FrameLineInfo()
+			{
+				Handle = "";
+			}
+		}
+
+		private static List<SheetFrameCandidate> DetectFourLineRectangleFrames(
+			IReadOnlyList<Entity> selectedEntities,
+			Editor ed = null)
+		{
+			var result = new List<SheetFrameCandidate>();
+
+			List<FrameLineInfo> lines =
+				CollectHorizontalVerticalLines(selectedEntities);
+
+			List<FrameLineInfo> horizontals =
+				lines.Where(x => x.IsHorizontal).ToList();
+
+			List<FrameLineInfo> verticals =
+				lines.Where(x => x.IsVertical).ToList();
+
+			double tol = 5.0;
+
+			foreach (FrameLineInfo h1 in horizontals)
+			{
+				foreach (FrameLineInfo h2 in horizontals)
+				{
+					if (h1 == h2)
+						continue;
+
+					double topY = System.Math.Max(h1.Y1, h2.Y1);
+					double bottomY = System.Math.Min(h1.Y1, h2.Y1);
+
+					if (topY - bottomY < 100.0)
+						continue;
+
+					FrameLineInfo top = h1.Y1 >= h2.Y1 ? h1 : h2;
+					FrameLineInfo bottom = h1.Y1 < h2.Y1 ? h1 : h2;
+
+					foreach (FrameLineInfo v1 in verticals)
+					{
+						foreach (FrameLineInfo v2 in verticals)
+						{
+							if (v1 == v2)
+								continue;
+
+							double leftX = System.Math.Min(v1.X1, v2.X1);
+							double rightX = System.Math.Max(v1.X1, v2.X1);
+
+							if (rightX - leftX < 100.0)
+								continue;
+
+							FrameLineInfo left = v1.X1 <= v2.X1 ? v1 : v2;
+							FrameLineInfo right = v1.X1 > v2.X1 ? v1 : v2;
+
+							if (!IsRectangleCornerMatched(
+								top,
+								bottom,
+								left,
+								right,
+								tol))
+							{
+								continue;
+							}
+
+							Bounds2D bounds =
+								new Bounds2D(
+									leftX,
+									bottomY,
+									rightX,
+									topY);
+
+							if (!IsLargeEnoughFrame(bounds))
+								continue;
+
+							if (!IsFrameLikeByBounds(bounds))
+								continue;
+
+							int insideCount =
+								CountEntitiesInsideBounds(
+									selectedEntities,
+									bounds);
+
+							if (insideCount < 5)
+								continue;
+
+							double area = bounds.Width * bounds.Height;
+							double score =
+								35.0 +
+								System.Math.Min(insideCount, 100) * 0.5 +
+								System.Math.Min(area / 100000.0, 30);
+
+							SheetFrameCandidate candidate =
+								new SheetFrameCandidate();
+
+							candidate.ObjectId = top.ObjectId;
+							candidate.Handle =
+								top.Handle + "+" +
+								bottom.Handle + "+" +
+								left.Handle + "+" +
+								right.Handle;
+
+							candidate.EntityType = "FourLineRectangle";
+							candidate.Layer = top.Entity.Layer;
+							candidate.Bounds = bounds;
+							candidate.InsideEntityCount = insideCount;
+							candidate.Score = score;
+
+							result.Add(candidate);
+						}
+					}
+				}
+			}
+
+			return result;
+		}
+
+		private static List<FrameLineInfo> CollectHorizontalVerticalLines(
+			IReadOnlyList<Entity> selectedEntities)
+		{
+			var result = new List<FrameLineInfo>();
+
+			double angleTol = 1.0;
+			double minLength = 100.0;
+
+			foreach (Entity ent in selectedEntities)
+			{
+				Line line = ent as Line;
+
+				if (line == null)
+					continue;
+
+				double x1 = line.StartPoint.X;
+				double y1 = line.StartPoint.Y;
+				double x2 = line.EndPoint.X;
+				double y2 = line.EndPoint.Y;
+
+				double dx = System.Math.Abs(x2 - x1);
+				double dy = System.Math.Abs(y2 - y1);
+
+				if (dx < minLength && dy < minLength)
+					continue;
+
+				if (dy <= angleTol && dx >= minLength)
+				{
+					FrameLineInfo info = new FrameLineInfo();
+					info.Entity = ent;
+					info.ObjectId = ent.ObjectId;
+					info.Handle = ent.Handle.ToString();
+					info.IsHorizontal = true;
+					info.X1 = System.Math.Min(x1, x2);
+					info.X2 = System.Math.Max(x1, x2);
+					info.Y1 = (y1 + y2) * 0.5;
+					info.Y2 = info.Y1;
+
+					result.Add(info);
+				}
+				else if (dx <= angleTol && dy >= minLength)
+				{
+					FrameLineInfo info = new FrameLineInfo();
+					info.Entity = ent;
+					info.ObjectId = ent.ObjectId;
+					info.Handle = ent.Handle.ToString();
+					info.IsVertical = true;
+					info.X1 = (x1 + x2) * 0.5;
+					info.X2 = info.X1;
+					info.Y1 = System.Math.Min(y1, y2);
+					info.Y2 = System.Math.Max(y1, y2);
+
+					result.Add(info);
+				}
+			}
+
+			return result;
+		}
+
+		private static bool IsRectangleCornerMatched(
+			FrameLineInfo top,
+			FrameLineInfo bottom,
+			FrameLineInfo left,
+			FrameLineInfo right,
+			double tol)
+		{
+			if (!HorizontalCoversX(top, left.X1, tol))
+				return false;
+
+			if (!HorizontalCoversX(top, right.X1, tol))
+				return false;
+
+			if (!HorizontalCoversX(bottom, left.X1, tol))
+				return false;
+
+			if (!HorizontalCoversX(bottom, right.X1, tol))
+				return false;
+
+			if (!VerticalCoversY(left, top.Y1, tol))
+				return false;
+
+			if (!VerticalCoversY(left, bottom.Y1, tol))
+				return false;
+
+			if (!VerticalCoversY(right, top.Y1, tol))
+				return false;
+
+			if (!VerticalCoversY(right, bottom.Y1, tol))
+				return false;
+
+			return true;
+		}
+
+		private static bool HorizontalCoversX(
+			FrameLineInfo h,
+			double x,
+			double tol)
+		{
+			return x >= h.X1 - tol && x <= h.X2 + tol;
+		}
+
+		private static bool VerticalCoversY(
+			FrameLineInfo v,
+			double y,
+			double tol)
+		{
+			return y >= v.Y1 - tol && y <= v.Y2 + tol;
+		}
+
+		private static int CountEntitiesInsideBounds(
+			IReadOnlyList<Entity> allSelected,
+			Bounds2D frameBounds)
+		{
+			int count = 0;
+
+			foreach (Entity ent in allSelected)
+			{
+				Bounds2D b =
+					BricscadEntityTools.GetEntityBounds(ent);
+
+				if (b == null)
+					continue;
+
+				if (ContainsCenter(frameBounds, b))
+					count++;
+			}
+
+			return count;
 		}
 
 		private static List<SheetFrameCandidate> RemovePartialSelectionFrames(

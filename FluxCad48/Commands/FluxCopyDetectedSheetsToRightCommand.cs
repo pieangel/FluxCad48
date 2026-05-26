@@ -358,6 +358,52 @@ namespace FluxCad48.Commands
 			return result;
 		}
 
+		private static bool IsEntityInsideSheetFrame(
+			Bounds2D frameBounds,
+			Bounds2D entityBounds)
+		{
+			if (entityBounds == null || !entityBounds.IsValid)
+				return false;
+
+			if (frameBounds.Contains(entityBounds.Center))
+				return true;
+
+			double ratio = entityBounds.ContainedRatioIn(frameBounds);
+
+			if (ratio >= 0.20)
+				return true;
+
+			if (IsBoundsOverlapped(frameBounds, entityBounds))
+			{
+				double minSize =
+					System.Math.Min(entityBounds.Width, entityBounds.Height);
+
+				if (minSize <= 1.0)
+					return true;
+			}
+
+			return false;
+		}
+
+		private static bool IsBoundsOverlapped(
+			Bounds2D a,
+			Bounds2D b)
+		{
+			if (a.MaxX < b.MinX)
+				return false;
+
+			if (a.MinX > b.MaxX)
+				return false;
+
+			if (a.MaxY < b.MinY)
+				return false;
+
+			if (a.MinY > b.MaxY)
+				return false;
+
+			return true;
+		}
+
 		private static List<SheetPlacement> CreateRowPreservingPlacements(
 			List<SheetRegion> sheets,
 			Bounds2D drawingBounds,
