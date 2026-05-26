@@ -122,6 +122,9 @@
     <Compile Include="ShapeViewAnalysis\ViewIsland.cs" />
     <Compile Include="ShapeViewAnalysis\ViewIslandBuilder.cs" />
     <Compile Include="ShapeViewAnalysis\ViewIslandBuildOptions.cs" />
+    <Compile Include="ShapeViewAnalysis\ViewIslandDebugDrawer.cs" />
+    <Compile Include="ShapeViewAnalysis\ViewIslandRole.cs" />
+    <Compile Include="ShapeViewAnalysis\ViewIslandRoleClassifier.cs" />
     <Compile Include="Sheets\CopiedSheetInfo.cs" />
     <Compile Include="Sheets\FluxCopyGroupIdGenerator.cs" />
     <Compile Include="Sheets\SelectedSheetUnitInfo.cs" />

@@ -118,6 +118,15 @@ namespace FluxCad48.Commands
 					island.ThinnessRatio,
 					island.IsThinViewCandidate));
 			}
+
+			ViewIslandRoleClassifier.ClassifyAll(islands);
+
+			ViewIslandDebugDrawer.Draw(
+				db,
+				ed,
+				islands);
+
+
 		}
 
 		private static void CollectSheetEntities(

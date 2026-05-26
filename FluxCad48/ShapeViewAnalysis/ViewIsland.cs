@@ -5,6 +5,10 @@ namespace FluxCad48.ShapeViewAnalysis
 {
 	public sealed class ViewIsland
 	{
+		public ViewIslandRole Role { get; set; } = ViewIslandRole.Unknown;
+
+		public string DebugLabel { get; set; } = "";
+
 		public int Index { get; set; }
 
 		public List<SheetEntity> GeometryEntities { get; private set; }
