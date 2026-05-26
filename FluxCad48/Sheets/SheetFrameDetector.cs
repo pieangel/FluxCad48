@@ -15,56 +15,11 @@ namespace FluxCad48.Sheets
 			IReadOnlyList<Entity> selectedEntities,
 			Editor ed = null)
 		{
-			var candidates = new List<SheetFrameCandidate>();
-
-			foreach (var ent in selectedEntities)
-			{
-				var bounds = BricscadEntityTools.GetEntityBounds(ent);
-				if (bounds == null)
-					continue;
-
-				if (!IsLargeEnoughFrame(bounds))
-					continue;
-
-				if (!IsFrameLikeEntity(ent, bounds))
-					continue;
-
-				int insideCount = CountEntitiesInsideBounds(
-					selectedEntities,
-					ent,
-					bounds);
-
-				if (insideCount < 5)
-					continue;
-
-				double score = CalculateFrameScore(ent, bounds, insideCount);
-
-				candidates.Add(new SheetFrameCandidate
-				{
-					ObjectId = ent.ObjectId,
-					Handle = ent.Handle.ToString(),
-					EntityType = ent.GetType().Name,
-					Layer = ent.Layer,
-					Bounds = bounds,
-					InsideEntityCount = insideCount,
-					Score = score
-				});
-			}
-
-			ed?.WriteMessage($"\n[FrameDetect] RawCandidates={candidates.Count}");
-
-			candidates = RemoveDuplicateFrames(candidates);
-
-			ed?.WriteMessage($"\n[FrameDetect] AfterDuplicateFilter={candidates.Count}");
-
-			var filtered = ResolveOverlappingFrameCandidates(candidates);
-
-			ed?.WriteMessage($"\n[FrameDetect] AfterOverlapFilter={filtered.Count}");
-
-			return filtered
-				.OrderBy(f => f.Bounds.MinY)
-				.ThenBy(f => f.Bounds.MinX)
-				.ToList();
+			return DetectCore(
+				selectedEntities,
+				null,
+				false,
+				ed);
 		}
 
 		private static bool IsFrameLikeEntity(Entity ent, Bounds2D bounds)
@@ -244,6 +199,114 @@ namespace FluxCad48.Sheets
 
 				if (!nested)
 					result.Add(child);
+			}
+
+			return result;
+		}
+
+		public static List<SheetFrameCandidate> Detect(
+			IReadOnlyList<Entity> selectedEntities,
+			Bounds2D pickBounds,
+			Editor ed = null)
+		{
+			return DetectCore(
+				selectedEntities,
+				pickBounds,
+				true,
+				ed);
+		}
+
+		private static List<SheetFrameCandidate> DetectCore(
+			IReadOnlyList<Entity> selectedEntities,
+			Bounds2D pickBounds,
+			bool hasPickBounds,
+			Editor ed)
+		{
+			var candidates = new List<SheetFrameCandidate>();
+
+			foreach (var ent in selectedEntities)
+			{
+				var bounds = BricscadEntityTools.GetEntityBounds(ent);
+				if (bounds == null)
+					continue;
+
+				if (!IsLargeEnoughFrame(bounds))
+					continue;
+
+				if (!IsFrameLikeEntity(ent, bounds))
+					continue;
+
+				int insideCount = CountEntitiesInsideBounds(
+					selectedEntities,
+					ent,
+					bounds);
+
+				if (insideCount < 5)
+					continue;
+
+				double score = CalculateFrameScore(ent, bounds, insideCount);
+
+				candidates.Add(new SheetFrameCandidate
+				{
+					ObjectId = ent.ObjectId,
+					Handle = ent.Handle.ToString(),
+					EntityType = ent.GetType().Name,
+					Layer = ent.Layer,
+					Bounds = bounds,
+					InsideEntityCount = insideCount,
+					Score = score
+				});
+			}
+
+			ed?.WriteMessage($"\n[FrameDetect] RawCandidates={candidates.Count}");
+
+			candidates = RemoveDuplicateFrames(candidates);
+
+			ed?.WriteMessage($"\n[FrameDetect] AfterDuplicateFilter={candidates.Count}");
+
+			var filtered = ResolveOverlappingFrameCandidates(candidates);
+
+			ed?.WriteMessage($"\n[FrameDetect] AfterOverlapFilter={filtered.Count}");
+
+			if (hasPickBounds)
+			{
+				filtered = RemovePartialSelectionFrames(
+					filtered,
+					pickBounds,
+					selectedEntities,
+					ed);
+
+				ed?.WriteMessage($"\n[FrameDetect] AfterPartialFilter={filtered.Count}");
+			}
+
+			return filtered
+				.OrderBy(f => f.Bounds.MinY)
+				.ThenBy(f => f.Bounds.MinX)
+				.ToList();
+		}
+
+		private static List<SheetFrameCandidate> RemovePartialSelectionFrames(
+			List<SheetFrameCandidate> frames,
+			Bounds2D pickBounds,
+			IReadOnlyList<Entity> selectedEntities,
+			Editor ed = null)
+		{
+			var result = new List<SheetFrameCandidate>();
+
+			foreach (var frame in frames)
+			{
+				double containedRatio =
+					frame.Bounds.ContainedRatioIn(pickBounds);
+
+				bool partial = containedRatio < 0.98;
+
+				ed?.WriteMessage(
+					$"\n[PartialCheck] Handle={frame.Handle}, " +
+					$"ContainedRatio={containedRatio:0.000}, " +
+					$"Partial={partial}");
+
+				if (!partial)
+					result.Add(frame);
 			}
 
 			return result;

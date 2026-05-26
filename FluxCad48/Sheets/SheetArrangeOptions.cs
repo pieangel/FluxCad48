@@ -18,7 +18,7 @@
 		{
 			MaxColumnsPerRow = 20;
 			ColumnGap = 100.0;
-			RowGap = 300.0;
+			RowGap = 1200.0;
 			StartGapFromSource = 300.0;
 			AlignBottom = true;
 			DrawYellowMarkerOnSource = true;

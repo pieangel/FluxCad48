@@ -98,9 +98,11 @@
     <Compile Include="Brics\FluxXDataTools.cs" />
     <Compile Include="Brics\WorldEntityInfo.cs" />
     <Compile Include="Commands\Commands.cs" />
+    <Compile Include="Commands\FluxCopyDetectedSheetsToRightCommand.cs" />
     <Compile Include="Commands\FluxCopySelectedSheetsToRightCommand.cs" />
     <Compile Include="Commands\FluxDebugSelectedCoordsDeepCommand.cs" />
     <Compile Include="Commands\FluxDebugSelectedSheetUnitsCommand.cs" />
+    <Compile Include="Commands\FluxDetectPickWindowSheetFramesCommand.cs" />
     <Compile Include="Commands\FluxDetectSelectedSheetFramesCommand.cs" />
     <Compile Include="Commands\FluxPickFrameCopySheetToRightCommand.cs" />
     <Compile Include="Geometry\Bounds2D.cs" />
