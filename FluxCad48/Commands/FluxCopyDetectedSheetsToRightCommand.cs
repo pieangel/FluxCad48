@@ -81,6 +81,17 @@ namespace FluxCad48.Commands
 				List<SheetFrameCandidate> frames =
 					SheetFrameDetector.Detect(selectedEntities, ed);
 
+				Bounds2D selectionBounds = new Bounds2D(
+					System.Math.Min(ppr1.Value.X, ppr2.Value.X),
+					System.Math.Min(ppr1.Value.Y, ppr2.Value.Y),
+					System.Math.Max(ppr1.Value.X, ppr2.Value.X),
+					System.Math.Max(ppr1.Value.Y, ppr2.Value.Y));
+
+				// 여기에 추가
+				frames = frames
+					.Where(f => IsFrameFullyInsideSelection(f.Bounds, selectionBounds))
+					.ToList();
+
 				ed.WriteMessage(
 					"\n[DetectedSheetCopy] DetectedFrames=" +
 					frames.Count);
@@ -128,6 +139,7 @@ namespace FluxCad48.Commands
 					CreateRowPreservingPlacements(
 						sheets,
 						drawingBounds,
+						selectionBounds.MaxY,
 						options,
 						ed);
 
@@ -187,7 +199,50 @@ namespace FluxCad48.Commands
 						clonedEntity.TransformBy(
 							Matrix3d.Displacement(displacement));
 
-						//clonedEntity.Layer = CopiedLayerName;
+						Bounds2D copiedFrameBounds = new Bounds2D(
+							placement.SourceBounds.MinX + placement.MoveX,
+							placement.SourceBounds.MinY + placement.MoveY,
+							placement.SourceBounds.MaxX + placement.MoveX,
+							placement.SourceBounds.MaxY + placement.MoveY);
+
+						Bounds2D copiedEntityBounds =
+							GetEntityWorldBounds(tr, clonedEntity);
+
+						bool copiedInside = false;
+
+						Line copiedLine = clonedEntity as Line;
+
+						if (copiedLine != null)
+						{
+							copiedInside =
+								IsLineInsideSheetFrameForCopy(
+									copiedFrameBounds,
+									copiedLine);
+						}
+						else
+						{
+							copiedInside =
+								copiedEntityBounds != null &&
+								IsEntityInsideSheetFrameForCopy(
+									copiedFrameBounds,
+									copiedEntityBounds);
+						}
+
+						if (!copiedInside)
+						{
+							ed.WriteMessage(
+								"\n[CopiedEntityOutOfFrame] Sheet=" +
+								sheetCode +
+								", EntityHandle=" +
+								clonedEntity.Handle +
+								", Type=" +
+								clonedEntity.GetType().Name +
+								", EntityBounds=" +
+								copiedEntityBounds +
+								", CopiedFrameBounds=" +
+								copiedFrameBounds);
+						}
+
 						SetSheetCodeXData(tr, db, clonedEntity, sheetCode);
 
 						clonedCount++;
@@ -253,6 +308,82 @@ namespace FluxCad48.Commands
 					"DetectedSheets=" + sheets.Count +
 					", TotalCloned=" + totalCloned);
 			}
+		}
+
+		private static bool IsLineInsideSheetFrameForCopy(
+	Bounds2D frameBounds,
+	Line line)
+		{
+			if (frameBounds == null || !frameBounds.IsValid)
+				return false;
+
+			if (line == null)
+				return false;
+
+			double frameMinSize =
+				System.Math.Min(frameBounds.Width, frameBounds.Height);
+
+			double tol = frameMinSize * 0.003;
+
+			if (tol < 1.0)
+				tol = 1.0;
+
+			if (tol > 8.0)
+				tol = 8.0;
+
+			bool p1Inside =
+				IsPointInsideBounds(
+					frameBounds,
+					line.StartPoint,
+					tol);
+
+			bool p2Inside =
+				IsPointInsideBounds(
+					frameBounds,
+					line.EndPoint,
+					tol);
+
+			if (p1Inside && p2Inside)
+				return true;
+
+			Bounds2D lineBounds = new Bounds2D(
+				System.Math.Min(line.StartPoint.X, line.EndPoint.X),
+				System.Math.Min(line.StartPoint.Y, line.EndPoint.Y),
+				System.Math.Max(line.StartPoint.X, line.EndPoint.X),
+				System.Math.Max(line.StartPoint.Y, line.EndPoint.Y));
+
+			return IsBoundsOverlappedWithTolerance(
+				frameBounds,
+				lineBounds,
+				tol);
+		}
+
+
+		private static bool IsFrameFullyInsideSelection(
+			Bounds2D frameBounds,
+			Bounds2D selectionBounds)
+		{
+			if (frameBounds == null || !frameBounds.IsValid)
+				return false;
+
+			if (selectionBounds == null || !selectionBounds.IsValid)
+				return false;
+
+			double tol = 1.0;
+
+			if (frameBounds.MinX < selectionBounds.MinX + tol)
+				return false;
+
+			if (frameBounds.MaxX > selectionBounds.MaxX - tol)
+				return false;
+
+			if (frameBounds.MinY < selectionBounds.MinY + tol)
+				return false;
+
+			if (frameBounds.MaxY > selectionBounds.MaxY - tol)
+				return false;
+
+			return true;
 		}
 
 		private static Bounds2D GetBoundsFromObjectIds(
@@ -350,16 +481,23 @@ namespace FluxCad48.Commands
 		}
 
 		private static List<SheetRegion> BuildSheetRegionsFromDetectedFrames(
-			Transaction tr,
-			Database db,
-			List<SheetFrameCandidate> frames,
-			int startIndex,
-			Editor ed)
+	Transaction tr,
+	Database db,
+	List<SheetFrameCandidate> frames,
+	int startIndex,
+	Editor ed)
 		{
-			var result = new List<SheetRegion>();
-
 			frames = SortFramesTopToBottomLeftToRight(frames);
 
+			var allSheets = new List<SheetRegion>();
+
+			for (int i = 0; i < frames.Count; i++)
+			{
+				SheetRegion sheet = new SheetRegion();
+				sheet.Bounds = frames[i].Bounds;
+				sheet.Index = startIndex + i;
+				allSheets.Add(sheet);
+			}
 
 			BlockTable bt =
 				(BlockTable)tr.GetObject(
@@ -371,29 +509,70 @@ namespace FluxCad48.Commands
 					bt[BlockTableRecord.ModelSpace],
 					OpenMode.ForRead);
 
-
-			foreach (SheetFrameCandidate frame in frames)
+			foreach (ObjectId id in modelSpace)
 			{
-				SheetRegion sheet = new SheetRegion();
-				sheet.Bounds = frame.Bounds;
+				Entity ent =
+					tr.GetObject(id, OpenMode.ForRead) as Entity;
 
-				foreach (ObjectId id in modelSpace)
+				if (ent == null)
+					continue;
+
+				if (IsFluxGeneratedEntity(ent))
+					continue;
+
+				int ownerIndex = -1;
+
+				Line line = ent as Line;
+
+				if (line != null)
 				{
-					Entity ent =
-						tr.GetObject(id, OpenMode.ForRead) as Entity;
+					ownerIndex =
+						FindBestOwningSheetIndexForLine(
+							frames,
+							line);
+				}
 
-					if (ent == null)
-						continue;
-
+				if (ownerIndex < 0)
+				{
 					Bounds2D b =
-						BricscadEntityTools.GetEntityBounds(ent);
+						GetEntityWorldBounds(tr, ent);
 
 					if (b == null || !b.IsValid)
 						continue;
 
-					if (IsEntityInsideSheetFrame(frame.Bounds, b))
-						sheet.EntityIds.Add(id);
+					ownerIndex =
+						FindBestOwningSheetIndex(
+							frames,
+							b);
 				}
+
+				if (ownerIndex < 0)
+					continue;
+
+				if (ownerIndex >= allSheets.Count)
+				{
+					ed.WriteMessage(
+						"\n[OwnerIndexError] OwnerIndex=" +
+						ownerIndex +
+						", SheetCount=" +
+						allSheets.Count +
+						", EntityHandle=" +
+						ent.Handle +
+						", Type=" +
+						ent.GetType().Name);
+
+					continue;
+				}
+
+				allSheets[ownerIndex].EntityIds.Add(id);
+			}
+
+			var result = new List<SheetRegion>();
+
+			for (int i = 0; i < allSheets.Count; i++)
+			{
+				SheetRegion sheet = allSheets[i];
+				SheetFrameCandidate frame = frames[i];
 
 				if (sheet.EntityIds.Count == 0)
 				{
@@ -406,6 +585,7 @@ namespace FluxCad48.Commands
 					continue;
 				}
 
+				// 여기서 실제 반환 순서에 맞게 Index를 다시 정리
 				sheet.Index = startIndex + result.Count;
 				result.Add(sheet);
 
@@ -423,6 +603,228 @@ namespace FluxCad48.Commands
 			}
 
 			return result;
+		}
+
+		private static int FindBestOwningSheetIndex(
+	List<SheetFrameCandidate> frames,
+	Bounds2D entityBounds)
+		{
+			if (frames == null || frames.Count == 0)
+				return -1;
+
+			int bestIndex = -1;
+			double bestScore = 0.0;
+
+			for (int i = 0; i < frames.Count; i++)
+			{
+				double score =
+					GetSheetOwnershipScore(
+						frames[i].Bounds,
+						entityBounds);
+
+				if (score > bestScore)
+				{
+					bestScore = score;
+					bestIndex = i;
+				}
+			}
+
+			if (bestScore <= 0.0)
+				return -1;
+
+			return bestIndex;
+		}
+
+		private static double GetSheetOwnershipScore(
+	Bounds2D frameBounds,
+	Bounds2D entityBounds)
+		{
+			if (frameBounds == null || !frameBounds.IsValid)
+				return 0.0;
+
+			if (entityBounds == null || !entityBounds.IsValid)
+				return 0.0;
+
+			double frameMinSize =
+				System.Math.Min(frameBounds.Width, frameBounds.Height);
+
+			double tol = frameMinSize * 0.003;
+
+			if (tol < 1.0)
+				tol = 1.0;
+
+			if (tol > 8.0)
+				tol = 8.0;
+
+			bool fullyInside =
+				entityBounds.MinX >= frameBounds.MinX - tol &&
+				entityBounds.MaxX <= frameBounds.MaxX + tol &&
+				entityBounds.MinY >= frameBounds.MinY - tol &&
+				entityBounds.MaxY <= frameBounds.MaxY + tol;
+
+			if (fullyInside)
+				return 1000.0 + GetBoundsOverlapRatio(entityBounds, frameBounds);
+
+			if (frameBounds.Contains(entityBounds.Center))
+				return 500.0 + GetBoundsOverlapRatio(entityBounds, frameBounds);
+
+			if (!IsBoundsOverlapped(frameBounds, entityBounds))
+				return 0.0;
+
+			double overlapRatio =
+				GetBoundsOverlapRatio(entityBounds, frameBounds);
+
+			if (overlapRatio <= 0.0)
+				return 0.0;
+
+			double entityMinSize =
+				System.Math.Min(entityBounds.Width, entityBounds.Height);
+
+			double entityMaxSize =
+				System.Math.Max(entityBounds.Width, entityBounds.Height);
+
+			bool isThinLineLike =
+				entityMinSize <= tol * 2.0 &&
+				entityMaxSize <= System.Math.Max(frameBounds.Width, frameBounds.Height) * 1.05;
+
+			if (isThinLineLike && overlapRatio >= 0.50)
+				return 100.0 + overlapRatio;
+
+			return 0.0;
+		}
+
+		private static int FindBestOwningSheetIndexForLine(
+	List<SheetFrameCandidate> frames,
+	Line line)
+		{
+			if (frames == null || line == null)
+				return -1;
+
+			int bestIndex = -1;
+			double bestScore = 0.0;
+
+			Point3d p1 = line.StartPoint;
+			Point3d p2 = line.EndPoint;
+
+			for (int i = 0; i < frames.Count; i++)
+			{
+				double score =
+					GetLineOwnershipScore(
+						frames[i].Bounds,
+						p1,
+						p2);
+
+				if (score > bestScore)
+				{
+					bestScore = score;
+					bestIndex = i;
+				}
+			}
+
+			if (bestScore <= 0.0)
+				return -1;
+
+			return bestIndex;
+		}
+
+		private static double GetLineOwnershipScore(
+	Bounds2D frameBounds,
+	Point3d p1,
+	Point3d p2)
+		{
+			if (frameBounds == null || !frameBounds.IsValid)
+				return 0.0;
+
+			double frameMinSize =
+				System.Math.Min(frameBounds.Width, frameBounds.Height);
+
+			double tol = frameMinSize * 0.003;
+
+			if (tol < 1.0)
+				tol = 1.0;
+
+			if (tol > 8.0)
+				tol = 8.0;
+
+			bool p1Inside = IsPointInsideBounds(frameBounds, p1, tol);
+			bool p2Inside = IsPointInsideBounds(frameBounds, p2, tol);
+
+			if (p1Inside && p2Inside)
+				return 1000.0;
+
+			if (p1Inside || p2Inside)
+				return 500.0;
+
+			Bounds2D lineBounds = new Bounds2D(
+				System.Math.Min(p1.X, p2.X),
+				System.Math.Min(p1.Y, p2.Y),
+				System.Math.Max(p1.X, p2.X),
+				System.Math.Max(p1.Y, p2.Y));
+
+			if (!IsBoundsOverlappedWithTolerance(frameBounds, lineBounds, tol))
+				return 0.0;
+
+			return 100.0;
+		}
+
+		private static bool IsPointInsideBounds(
+	Bounds2D bounds,
+	Point3d p,
+	double tol)
+		{
+			if (p.X < bounds.MinX - tol)
+				return false;
+
+			if (p.X > bounds.MaxX + tol)
+				return false;
+
+			if (p.Y < bounds.MinY - tol)
+				return false;
+
+			if (p.Y > bounds.MaxY + tol)
+				return false;
+
+			return true;
+		}
+
+		private static bool IsBoundsOverlappedWithTolerance(
+	Bounds2D a,
+	Bounds2D b,
+	double tol)
+		{
+			if (a.MaxX + tol < b.MinX)
+				return false;
+
+			if (a.MinX - tol > b.MaxX)
+				return false;
+
+			if (a.MaxY + tol < b.MinY)
+				return false;
+
+			if (a.MinY - tol > b.MaxY)
+				return false;
+
+			return true;
+		}
+
+
+		private static bool IsFluxGeneratedEntity(Entity ent)
+		{
+			if (ent == null)
+				return false;
+
+			if (ent.Layer == CopiedLayerName)
+				return true;
+
+			if (ent.Layer == MarkerLayerName)
+				return true;
+
+			ResultBuffer rb = ent.GetXDataForApplication(SheetCodeAppName);
+
+			if (rb != null)
+				return true;
+
+			return false;
 		}
 
 		private static bool IsValidSheetRegion(
@@ -446,31 +848,146 @@ namespace FluxCad48.Commands
 			return false;
 		}
 
-		private static bool IsEntityInsideSheetFrame(
+		private static bool IsEntityStrictlyInsideSheetFrame(
 			Bounds2D frameBounds,
 			Bounds2D entityBounds)
 		{
+			if (frameBounds == null || !frameBounds.IsValid)
+				return false;
+
 			if (entityBounds == null || !entityBounds.IsValid)
 				return false;
 
+			double frameMinSize =
+				System.Math.Min(frameBounds.Width, frameBounds.Height);
+
+			double tol = frameMinSize * 0.002;
+
+			if (tol < 1.0)
+				tol = 1.0;
+
+			if (tol > 5.0)
+				tol = 5.0;
+
+			if (entityBounds.MinX < frameBounds.MinX - tol)
+				return false;
+
+			if (entityBounds.MaxX > frameBounds.MaxX + tol)
+				return false;
+
+			if (entityBounds.MinY < frameBounds.MinY - tol)
+				return false;
+
+			if (entityBounds.MaxY > frameBounds.MaxY + tol)
+				return false;
+
+			return true;
+		}
+
+		private static bool IsEntityInsideSheetFrameForCopy(
+			Bounds2D frameBounds,
+			Bounds2D entityBounds)
+		{
+			if (frameBounds == null || !frameBounds.IsValid)
+				return false;
+
+			if (entityBounds == null || !entityBounds.IsValid)
+				return false;
+
+			double frameMinSize =
+				System.Math.Min(frameBounds.Width, frameBounds.Height);
+
+			double tol = frameMinSize * 0.003;
+
+			if (tol < 1.0)
+				tol = 1.0;
+
+			if (tol > 8.0)
+				tol = 8.0;
+
+			// 1차: 완전 내부
+			if (entityBounds.MinX >= frameBounds.MinX - tol &&
+				entityBounds.MaxX <= frameBounds.MaxX + tol &&
+				entityBounds.MinY >= frameBounds.MinY - tol &&
+				entityBounds.MaxY <= frameBounds.MaxY + tol)
+			{
+				return true;
+			}
+
+			// 2차: 중심이 프레임 내부에 있으면 포함
 			if (frameBounds.Contains(entityBounds.Center))
 				return true;
 
-			double ratio = entityBounds.ContainedRatioIn(frameBounds);
+			// 3차: 표/프레임 경계선 같은 아주 얇은 객체 보정
+			if (!IsBoundsOverlapped(frameBounds, entityBounds))
+				return false;
 
-			if (ratio >= 0.20)
+			double entityMinSize =
+				System.Math.Min(entityBounds.Width, entityBounds.Height);
+
+			double entityMaxSize =
+				System.Math.Max(entityBounds.Width, entityBounds.Height);
+
+			bool isThinLineLike =
+				entityMinSize <= tol * 2.0 &&
+				entityMaxSize <= System.Math.Max(frameBounds.Width, frameBounds.Height) * 1.05;
+
+			if (!isThinLineLike)
+				return false;
+
+			double overlapRatio =
+				GetBoundsOverlapRatio(entityBounds, frameBounds);
+
+			if (overlapRatio >= 0.50)
 				return true;
 
-			if (IsBoundsOverlapped(frameBounds, entityBounds))
-			{
-				double minSize =
-					System.Math.Min(entityBounds.Width, entityBounds.Height);
+			return false;
+		}
 
-				if (minSize <= 1.0)
-					return true;
+		private static double GetBoundsOverlapRatio(
+			Bounds2D entityBounds,
+			Bounds2D frameBounds)
+		{
+			double minX = System.Math.Max(entityBounds.MinX, frameBounds.MinX);
+			double minY = System.Math.Max(entityBounds.MinY, frameBounds.MinY);
+			double maxX = System.Math.Min(entityBounds.MaxX, frameBounds.MaxX);
+			double maxY = System.Math.Min(entityBounds.MaxY, frameBounds.MaxY);
+
+			double w = maxX - minX;
+			double h = maxY - minY;
+
+			if (w < 0.0)
+				w = 0.0;
+
+			if (h < 0.0)
+				h = 0.0;
+
+			double overlapArea = w * h;
+			double entityArea = entityBounds.Width * entityBounds.Height;
+
+			// 선 객체는 면적이 0일 수 있으므로 길이 기준 보정
+			if (entityArea <= 0.000001)
+			{
+				double ew = entityBounds.Width;
+				double eh = entityBounds.Height;
+
+				if (ew >= eh)
+				{
+					if (ew <= 0.000001)
+						return 0.0;
+
+					return w / ew;
+				}
+				else
+				{
+					if (eh <= 0.000001)
+						return 0.0;
+
+					return h / eh;
+				}
 			}
 
-			return false;
+			return overlapArea / entityArea;
 		}
 
 		private static bool IsBoundsOverlapped(
@@ -492,9 +1009,126 @@ namespace FluxCad48.Commands
 			return true;
 		}
 
+
+		private static Bounds2D GetEntityWorldBounds(
+			Transaction tr,
+			Entity ent)
+		{
+			if (ent == null)
+				return null;
+
+			BlockReference br = ent as BlockReference;
+
+			if (br != null)
+				return GetBlockReferenceWorldBounds(tr, br);
+
+			try
+			{
+				Extents3d ext = ent.GeometricExtents;
+
+				return new Bounds2D(
+					ext.MinPoint.X,
+					ext.MinPoint.Y,
+					ext.MaxPoint.X,
+					ext.MaxPoint.Y);
+			}
+			catch
+			{
+				return null;
+			}
+		}
+
+		private static Bounds2D GetBlockReferenceWorldBounds(
+			Transaction tr,
+			BlockReference br)
+		{
+			if (br == null)
+				return null;
+
+			try
+			{
+				BlockTableRecord btr =
+					tr.GetObject(
+						br.BlockTableRecord,
+						OpenMode.ForRead) as BlockTableRecord;
+
+				if (btr == null)
+					return null;
+
+				Bounds2D result = null;
+
+				foreach (ObjectId childId in btr)
+				{
+					Entity child =
+						tr.GetObject(childId, OpenMode.ForRead) as Entity;
+
+					if (child == null)
+						continue;
+
+					Bounds2D childBounds =
+						GetTransformedChildBounds(child, br.BlockTransform);
+
+					if (childBounds == null || !childBounds.IsValid)
+						continue;
+
+					result = UnionBounds(result, childBounds);
+				}
+
+				return result;
+			}
+			catch
+			{
+				return null;
+			}
+		}
+
+		private static Bounds2D GetTransformedChildBounds(
+			Entity child,
+			Matrix3d transform)
+		{
+			try
+			{
+				Extents3d ext = child.GeometricExtents;
+
+				Point3d p1 = new Point3d(ext.MinPoint.X, ext.MinPoint.Y, 0).TransformBy(transform);
+				Point3d p2 = new Point3d(ext.MaxPoint.X, ext.MinPoint.Y, 0).TransformBy(transform);
+				Point3d p3 = new Point3d(ext.MaxPoint.X, ext.MaxPoint.Y, 0).TransformBy(transform);
+				Point3d p4 = new Point3d(ext.MinPoint.X, ext.MaxPoint.Y, 0).TransformBy(transform);
+
+				double minX = System.Math.Min(System.Math.Min(p1.X, p2.X), System.Math.Min(p3.X, p4.X));
+				double minY = System.Math.Min(System.Math.Min(p1.Y, p2.Y), System.Math.Min(p3.Y, p4.Y));
+				double maxX = System.Math.Max(System.Math.Max(p1.X, p2.X), System.Math.Max(p3.X, p4.X));
+				double maxY = System.Math.Max(System.Math.Max(p1.Y, p2.Y), System.Math.Max(p3.Y, p4.Y));
+
+				return new Bounds2D(minX, minY, maxX, maxY);
+			}
+			catch
+			{
+				return null;
+			}
+		}
+
+		private static Bounds2D UnionBounds(
+			Bounds2D a,
+			Bounds2D b)
+		{
+			if (a == null || !a.IsValid)
+				return b;
+
+			if (b == null || !b.IsValid)
+				return a;
+
+			return new Bounds2D(
+				System.Math.Min(a.MinX, b.MinX),
+				System.Math.Min(a.MinY, b.MinY),
+				System.Math.Max(a.MaxX, b.MaxX),
+				System.Math.Max(a.MaxY, b.MaxY));
+		}
+
 		private static List<SheetPlacement> CreateRowPreservingPlacements(
 			List<SheetRegion> sheets,
 			Bounds2D drawingBounds,
+			double targetTopY,
 			SheetArrangeOptions options,
 			Editor ed)
 		{
@@ -548,7 +1182,7 @@ namespace FluxCad48.Commands
 			}
 
 			double startX = drawingBounds.MaxX + startGap;
-			double currentTopY = drawingBounds.MaxY;
+			double currentTopY = targetTopY;
 
 			for (int r = 0; r < rows.Count; r++)
 			{
