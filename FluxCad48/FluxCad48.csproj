@@ -109,6 +109,16 @@
     <Compile Include="Geometry\CadPoint2D.cs" />
     <Compile Include="Geometry\Point2D.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="ShapeViewAnalysis\BoundsTools.cs" />
+    <Compile Include="ShapeViewAnalysis\ClosedLoopInfo.cs" />
+    <Compile Include="ShapeViewAnalysis\SelectedShapeViewAnalysisResult.cs" />
+    <Compile Include="ShapeViewAnalysis\SelectedShapeViewClassifier.cs" />
+    <Compile Include="ShapeViewAnalysis\SelectedShapeViewSet.cs" />
+    <Compile Include="ShapeViewAnalysis\SheetEntity.cs" />
+    <Compile Include="ShapeViewAnalysis\SheetEntityKind.cs" />
+    <Compile Include="ShapeViewAnalysis\ViewIsland.cs" />
+    <Compile Include="ShapeViewAnalysis\ViewIslandBuilder.cs" />
+    <Compile Include="ShapeViewAnalysis\ViewIslandBuildOptions.cs" />
     <Compile Include="Sheets\CopiedSheetInfo.cs" />
     <Compile Include="Sheets\FluxCopyGroupIdGenerator.cs" />
     <Compile Include="Sheets\SelectedSheetUnitInfo.cs" />
