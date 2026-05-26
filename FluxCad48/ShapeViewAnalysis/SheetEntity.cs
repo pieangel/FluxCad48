@@ -206,5 +206,97 @@ namespace FluxCad48.ShapeViewAnalysis
 
 			return string.Join("/", BlockPath.ToArray());
 		}
+
+		public bool HasLineGeometry
+		{
+			get
+			{
+				return Kind == SheetEntityKind.Line
+					&& StartPoint.HasValue
+					&& EndPoint.HasValue;
+			}
+		}
+
+		public bool HasPolylineGeometry
+		{
+			get
+			{
+				return Kind == SheetEntityKind.Polyline
+					&& Vertices != null
+					&& Vertices.Count >= 2;
+			}
+		}
+
+		public bool HasArcGeometry
+		{
+			get
+			{
+				return Kind == SheetEntityKind.Arc
+					&& CenterPoint.HasValue
+					&& Radius.HasValue
+					&& Radius.Value > 0.0
+					&& StartAngleDeg2D.HasValue
+					&& EndAngleDeg2D.HasValue;
+			}
+		}
+
+		public bool HasCircleGeometry
+		{
+			get
+			{
+				return Kind == SheetEntityKind.Circle
+					&& CenterPoint.HasValue
+					&& Radius.HasValue
+					&& Radius.Value > 0.0;
+			}
+		}
+
+		public bool HasEllipseGeometry
+		{
+			get
+			{
+				return Kind == SheetEntityKind.Ellipse
+					&& CenterPoint.HasValue
+					&& MajorRadius.HasValue
+					&& MinorRadius.HasValue
+					&& MajorRadius.Value > 0.0
+					&& MinorRadius.Value > 0.0;
+			}
+		}
+
+		public bool IsLoopExtractableGeometry
+		{
+			get
+			{
+				return IsVisible
+					&& !IsReferenceGeometry
+					&& !IsTextLike
+					&& !IsDimensionLike
+					&& !IsBlockReference
+					&&
+					(
+						HasLineGeometry
+						|| HasPolylineGeometry
+						|| HasArcGeometry
+						|| HasCircleGeometry
+						|| HasEllipseGeometry
+					);
+			}
+		}
+
+		public bool IsSemanticEvidenceGeometry
+		{
+			get
+			{
+				return IsGeometryLike
+					&& IsVisible
+					&&
+					(
+						IsCenterLine
+						|| IsHiddenLine
+						|| IsReferenceLine
+					);
+			}
+		}
 	}
 }
