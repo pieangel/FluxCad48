@@ -28,6 +28,12 @@ namespace FluxCad48.ShapeViewAnalysis
 		public List<string> BlockPath { get; private set; }
 		public int Depth { get; set; }
 
+		// BlockReference 추적용
+		public bool IsFromBlock { get; set; }
+		public bool IsWorldCoordinate { get; set; }
+		public string SourceBlockName { get; set; }
+		public string ParentHandle { get; set; }
+
 		// 형상 분석용 최소 기하 정보
 		public Point2D? StartPoint { get; set; }
 		public Point2D? EndPoint { get; set; }
@@ -51,6 +57,7 @@ namespace FluxCad48.ShapeViewAnalysis
 
 		public bool IsCenterLine { get; set; }
 		public bool IsHiddenLine { get; set; }
+		public bool IsReferenceLine { get; set; }
 
 		public bool IsVisible { get; set; }
 
@@ -78,9 +85,13 @@ namespace FluxCad48.ShapeViewAnalysis
 			BlockPath = new List<string>();
 			Vertices = new List<Point2D>();
 
+			IsFromBlock = false;
+			IsWorldCoordinate = true;
+			SourceBlockName = "";
+			ParentHandle = "";
+
 			LinetypeName = "";
 			EffectiveLinetypeName = "";
-
 			ColorName = "";
 
 			IsVisible = true;
@@ -137,6 +148,37 @@ namespace FluxCad48.ShapeViewAnalysis
 			}
 		}
 
+		public bool IsReferenceGeometry
+		{
+			get
+			{
+				return IsCenterLine
+					|| IsHiddenLine
+					|| IsReferenceLine;
+			}
+		}
+
+		public bool IsUsableVisibleGeometry
+		{
+			get
+			{
+				return IsGeometryLike
+					&& IsVisible
+					&& !IsReferenceGeometry;
+			}
+		}
+
+		public bool HasGeometryPoints
+		{
+			get
+			{
+				return StartPoint.HasValue
+					|| EndPoint.HasValue
+					|| CenterPoint.HasValue
+					|| (Vertices != null && Vertices.Count > 0);
+			}
+		}
+
 		public string EntityTypeName
 		{
 			get { return EntityType ?? ""; }
@@ -145,6 +187,24 @@ namespace FluxCad48.ShapeViewAnalysis
 		public Point2D RepresentativePoint
 		{
 			get { return Anchor; }
+		}
+
+		public void AddBlockPath(string blockName)
+		{
+			if (string.IsNullOrWhiteSpace(blockName))
+				return;
+
+			BlockPath.Add(blockName);
+			Depth = BlockPath.Count;
+			IsFromBlock = true;
+		}
+
+		public string GetBlockPathText()
+		{
+			if (BlockPath == null || BlockPath.Count == 0)
+				return "";
+
+			return string.Join("/", BlockPath.ToArray());
 		}
 	}
 }

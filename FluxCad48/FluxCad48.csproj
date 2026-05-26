@@ -117,6 +117,8 @@
     <Compile Include="ShapeViewAnalysis\SelectedShapeViewSet.cs" />
     <Compile Include="ShapeViewAnalysis\SheetEntity.cs" />
     <Compile Include="ShapeViewAnalysis\SheetEntityKind.cs" />
+    <Compile Include="ShapeViewAnalysis\SheetEntityReferenceFilter.cs" />
+    <Compile Include="ShapeViewAnalysis\SheetEntityTransformTools.cs" />
     <Compile Include="ShapeViewAnalysis\ViewIsland.cs" />
     <Compile Include="ShapeViewAnalysis\ViewIslandBuilder.cs" />
     <Compile Include="ShapeViewAnalysis\ViewIslandBuildOptions.cs" />

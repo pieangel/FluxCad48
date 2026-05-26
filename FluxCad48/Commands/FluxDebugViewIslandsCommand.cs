@@ -20,7 +20,8 @@ namespace FluxCad48.Commands
 			Database db = doc.Database;
 
 			PromptSelectionOptions pso = new PromptSelectionOptions();
-			pso.MessageForAdding = "\n형상 뷰 영역을 선택하세요: ";
+			pso.MessageForAdding =
+				"\n복사된 쉬트 프레임 안에서 형상 뷰 영역만 선택하세요: ";
 
 			PromptSelectionResult psr = ed.GetSelection(pso);
 
@@ -43,9 +44,7 @@ namespace FluxCad48.Commands
 					if (ent == null)
 						continue;
 
-					SheetEntity se = ConvertToSheetEntity(ent);
-					if (se != null)
-						entities.Add(se);
+					CollectSheetEntities(ent, tr, entities);
 				}
 
 				tr.Commit();
@@ -62,6 +61,40 @@ namespace FluxCad48.Commands
 				set.DimensionEntities.Count,
 				set.TextEntities.Count,
 				set.UnknownEntities.Count));
+
+
+			AppendLog(ed, "[ViewIsland] Unknown Entities:");
+
+			for (int i = 0; i < set.UnknownEntities.Count; i++)
+			{
+				SheetEntity e = set.UnknownEntities[i];
+
+				AppendLog(ed, string.Format(
+					"  Unknown[{0}] Handle={1}, Kind={2}, EntityType={3}, Layer={4}, Bounds={5}",
+					i,
+					e.Handle,
+					e.Kind,
+					e.EntityType,
+					e.Layer,
+					e.Bounds));
+			}
+
+			AppendLog(ed, "[ViewIsland] Geometry Entities:");
+
+			for (int i = 0; i < set.GeometryEntities.Count; i++)
+			{
+				SheetEntity e = set.GeometryEntities[i];
+
+				AppendLog(ed, string.Format(
+					"  Geometry[{0}] Handle={1}, Kind={2}, EntityType={3}, Layer={4}, Bounds={5}",
+					i,
+					e.Handle,
+					e.Kind,
+					e.EntityType,
+					e.Layer,
+					e.Bounds));
+			}
+
 
 			ViewIslandBuildOptions options = new ViewIslandBuildOptions();
 
@@ -84,6 +117,90 @@ namespace FluxCad48.Commands
 					island.Height,
 					island.ThinnessRatio,
 					island.IsThinViewCandidate));
+			}
+		}
+
+		private static void CollectSheetEntities(
+			Entity ent,
+			Transaction tr,
+			List<SheetEntity> results)
+		{
+			if (ent == null)
+				return;
+
+			BlockReference br = ent as BlockReference;
+			if (br != null)
+			{
+				CollectBlockReferenceEntities(
+					br,
+					br.BlockTransform,
+					tr,
+					results);
+				return;
+			}
+
+			SheetEntity se = ConvertToSheetEntity(ent);
+			if (se == null)
+				return;
+
+			if (SheetEntityReferenceFilter.IsReferenceEntity(se))
+				return;
+
+			results.Add(se);
+		}
+
+		private static void CollectBlockReferenceEntities(
+			BlockReference br,
+			Matrix3d accumulatedTransform,
+			Transaction tr,
+			List<SheetEntity> results)
+		{
+			if (br == null)
+				return;
+
+			BlockTableRecord btr =
+				tr.GetObject(br.BlockTableRecord, OpenMode.ForRead) as BlockTableRecord;
+
+			if (btr == null)
+				return;
+
+			foreach (ObjectId id in btr)
+			{
+				Entity child = tr.GetObject(id, OpenMode.ForRead) as Entity;
+				if (child == null)
+					continue;
+
+				BlockReference childBr = child as BlockReference;
+				if (childBr != null)
+				{
+					Matrix3d nestedTransform =
+						childBr.BlockTransform.PreMultiplyBy(accumulatedTransform);
+
+					CollectBlockReferenceEntities(
+						childBr,
+						nestedTransform,
+						tr,
+						results);
+
+					continue;
+				}
+
+				SheetEntity se = ConvertToSheetEntity(child);
+				if (se == null)
+					continue;
+
+				se.IsFromBlock = true;
+				se.IsWorldCoordinate = false;
+				se.SourceBlockName = br.Name;
+				se.ParentHandle = br.Handle.ToString();
+				se.AddBlockPath(br.Name);
+
+				SheetEntityTransformTools.Transform(se, accumulatedTransform);
+
+				if (SheetEntityReferenceFilter.IsReferenceEntity(se))
+					continue;
+
+				results.Add(se);
 			}
 		}
 
