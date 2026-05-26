@@ -102,6 +102,7 @@
     <Compile Include="Commands\FluxCopySelectedSheetsToRightCommand.cs" />
     <Compile Include="Commands\FluxDebugSelectedCoordsDeepCommand.cs" />
     <Compile Include="Commands\FluxDebugSelectedSheetUnitsCommand.cs" />
+    <Compile Include="Commands\FluxDebugViewIslandsCommand.cs" />
     <Compile Include="Commands\FluxDetectPickWindowSheetFramesCommand.cs" />
     <Compile Include="Commands\FluxDetectSelectedSheetFramesCommand.cs" />
     <Compile Include="Commands\FluxPickFrameCopySheetToRightCommand.cs" />
