@@ -18,6 +18,394 @@ namespace FluxCad48.Commands
 		private const string MarkerLayerName = "FLUX_MARKER";
 		private const string SheetCodeAppName = "FLUX_SHEET";
 
+		[CommandMethod("FLUX_DEBUG_MARK_ENTITY_BY_HANDLE")]
+		public void FluxDebugMarkEntityByHandle()
+		{
+			Document doc = Application.DocumentManager.MdiActiveDocument;
+			Database db = doc.Database;
+			Editor ed = doc.Editor;
+
+			PromptStringOptions pso =
+				new PromptStringOptions("\n표시할 Entity Handle을 입력하세요: ");
+
+			pso.AllowSpaces = false;
+
+			PromptResult pr = ed.GetString(pso);
+
+			if (pr.Status != PromptStatus.OK)
+				return;
+
+			string handleText = pr.StringResult.Trim();
+
+			using (Transaction tr = db.TransactionManager.StartTransaction())
+			{
+				ObjectId id;
+
+				try
+				{
+					Handle handle =
+						new Handle(
+							System.Convert.ToInt64(handleText, 16));
+
+					id = db.GetObjectId(false, handle, 0);
+				}
+				catch
+				{
+					ed.WriteMessage("\nHandle을 ObjectId로 변환하지 못했습니다.");
+					return;
+				}
+
+				if (id.IsNull)
+				{
+					ed.WriteMessage(
+						"\n해당 Handle을 현재 도면에서 찾지 못했습니다. Handle=" +
+						handleText);
+					return;
+				}
+
+				Entity ent = null;
+
+				try
+				{
+					ent =
+						tr.GetObject(id, OpenMode.ForRead) as Entity;
+				}
+				catch
+				{
+					ed.WriteMessage(
+						"\nObjectId는 찾았지만 Entity를 열지 못했습니다. Handle=" +
+						handleText);
+					return;
+				}
+
+				if (ent == null)
+				{
+					ed.WriteMessage("\n해당 Handle은 Entity가 아닙니다.");
+					return;
+				}
+
+				Bounds2D bounds =
+					GetEntityWorldBounds(tr, ent);
+
+				BlockReference br = ent as BlockReference;
+
+				ed.WriteMessage(
+					"\n[MarkEntity] Handle=" + handleText +
+					", Type=" + ent.GetType().Name +
+					", Layer=" + ent.Layer +
+					", Bounds=" + bounds);
+
+				if (br != null)
+				{
+					ed.WriteMessage(
+						"\n[MarkEntity] BlockName=" + GetBlockName(tr, br) +
+						", Position=(" +
+						br.Position.X.ToString("0.###") + "," +
+						br.Position.Y.ToString("0.###") + "," +
+						br.Position.Z.ToString("0.###") + ")");
+				}
+
+				BlockTable bt =
+					(BlockTable)tr.GetObject(
+						db.BlockTableId,
+						OpenMode.ForRead);
+
+				BlockTableRecord modelSpace =
+					(BlockTableRecord)tr.GetObject(
+						bt[BlockTableRecord.ModelSpace],
+						OpenMode.ForWrite);
+
+				BricscadEntityTools.EnsureLayer(tr, db, MarkerLayerName);
+
+				if (bounds != null && IsUsableBoundsForOwnership(bounds))
+				{
+					Polyline rect =
+						BricscadEntityTools.CreateRectanglePolyline(bounds);
+
+					rect.Layer = MarkerLayerName;
+					rect.Color = Color.FromColorIndex(ColorMethod.ByAci, 1);
+					rect.LineWeight = LineWeight.LineWeight070;
+
+					modelSpace.AppendEntity(rect);
+					tr.AddNewlyCreatedDBObject(rect, true);
+
+					DBText label =
+						CreateDebugLabel(
+							bounds.MinX,
+							bounds.MaxY,
+							"Handle " + handleText,
+							MarkerLayerName);
+
+					modelSpace.AppendEntity(label);
+					tr.AddNewlyCreatedDBObject(label, true);
+				}
+				else if (br != null)
+				{
+					double size = 200.0;
+
+					Bounds2D markerBounds =
+						new Bounds2D(
+							br.Position.X - size,
+							br.Position.Y - size,
+							br.Position.X + size,
+							br.Position.Y + size);
+
+					Polyline rect =
+						BricscadEntityTools.CreateRectanglePolyline(markerBounds);
+
+					rect.Layer = MarkerLayerName;
+					rect.Color = Color.FromColorIndex(ColorMethod.ByAci, 1);
+					rect.LineWeight = LineWeight.LineWeight070;
+
+					modelSpace.AppendEntity(rect);
+					tr.AddNewlyCreatedDBObject(rect, true);
+
+					DBText label =
+						CreateDebugLabel(
+							br.Position.X,
+							br.Position.Y + size,
+							"Handle " + handleText + " POS",
+							MarkerLayerName);
+
+					modelSpace.AppendEntity(label);
+					tr.AddNewlyCreatedDBObject(label, true);
+
+					DBPoint pt = new DBPoint(br.Position);
+					pt.Layer = MarkerLayerName;
+					pt.Color = Color.FromColorIndex(ColorMethod.ByAci, 1);
+
+					modelSpace.AppendEntity(pt);
+					tr.AddNewlyCreatedDBObject(pt, true);
+				}
+
+				tr.Commit();
+
+				ed.WriteMessage("\nFLUX_DEBUG_MARK_ENTITY_BY_HANDLE 완료.");
+			}
+		}
+
+		private static string GetBlockName(
+	Transaction tr,
+	BlockReference br)
+		{
+			if (br == null)
+				return "";
+
+			try
+			{
+				BlockTableRecord btr =
+					tr.GetObject(
+						br.BlockTableRecord,
+						OpenMode.ForRead) as BlockTableRecord;
+
+				if (btr == null)
+					return "";
+
+				return btr.Name;
+			}
+			catch
+			{
+				return "";
+			}
+		}
+
+		private static DBText CreateDebugLabel(
+			double x,
+			double y,
+			string text,
+			string layerName)
+		{
+			DBText label = new DBText();
+
+			label.TextString = text;
+			label.Position = new Point3d(x, y, 0);
+			label.Height = 80.0;
+			label.Layer = layerName;
+			label.Color = Color.FromColorIndex(ColorMethod.ByAci, 1);
+
+			return label;
+		}
+
+
+		[CommandMethod("FLUX_DEBUG_ANALYZE_COPIED_SHEET")]
+		public void FluxDebugAnalyzeCopiedSheet()
+		{
+			Document doc = Application.DocumentManager.MdiActiveDocument;
+			Database db = doc.Database;
+			Editor ed = doc.Editor;
+
+			PromptEntityOptions peo =
+				new PromptEntityOptions(
+					"\n분석할 복사된 쉬트 내부 개체 하나를 선택하세요: ");
+
+			PromptEntityResult per = ed.GetEntity(peo);
+
+			if (per.Status != PromptStatus.OK)
+			{
+				ed.WriteMessage("\n선택이 취소되었습니다.");
+				return;
+			}
+
+			using (Transaction tr = db.TransactionManager.StartTransaction())
+			{
+				Entity picked =
+					tr.GetObject(per.ObjectId, OpenMode.ForRead) as Entity;
+
+				if (picked == null)
+				{
+					ed.WriteMessage("\n선택한 객체가 Entity가 아닙니다.");
+					return;
+				}
+
+				string sheetCode = TryReadSheetCodeFromEntity(picked);
+
+				if (string.IsNullOrWhiteSpace(sheetCode))
+				{
+					ed.WriteMessage(
+						"\n선택한 객체에는 FLUX_SHEET XData가 없습니다.");
+					return;
+				}
+
+				List<Entity> sheetEntities =
+					CollectEntitiesBySheetCode(tr, db, sheetCode);
+
+				Bounds2D sheetBounds =
+					GetBoundsFromEntities(tr, sheetEntities);
+
+				ed.WriteMessage(
+					"\n[CopiedSheetAnalyze] SheetCode=" + sheetCode +
+					", EntityCount=" + sheetEntities.Count +
+					", Bounds=" + sheetBounds);
+
+				if (sheetBounds == null || !sheetBounds.IsValid)
+				{
+					ed.WriteMessage("\n쉬트 Bounds 계산 실패.");
+					return;
+				}
+
+				BlockTable bt =
+					(BlockTable)tr.GetObject(
+						db.BlockTableId,
+						OpenMode.ForRead);
+
+				BlockTableRecord modelSpace =
+					(BlockTableRecord)tr.GetObject(
+						bt[BlockTableRecord.ModelSpace],
+						OpenMode.ForWrite);
+
+				BricscadEntityTools.EnsureLayer(tr, db, MarkerLayerName);
+
+				Polyline rect =
+					BricscadEntityTools.CreateRectanglePolyline(sheetBounds);
+
+				rect.Layer = MarkerLayerName;
+				rect.Color = Color.FromColorIndex(ColorMethod.ByAci, 1);
+				rect.LineWeight = LineWeight.LineWeight070;
+
+				modelSpace.AppendEntity(rect);
+				tr.AddNewlyCreatedDBObject(rect, true);
+
+				DBText label =
+					CreateSheetCodeText(
+						sheetBounds,
+						0,
+						0,
+						"DEBUG-" + sheetCode,
+						MarkerLayerName,
+						1);
+
+				modelSpace.AppendEntity(label);
+				tr.AddNewlyCreatedDBObject(label, true);
+
+				tr.Commit();
+
+				ed.WriteMessage(
+					"\nFLUX_DEBUG_ANALYZE_COPIED_SHEET 완료.");
+			}
+		}
+
+		private static string TryReadSheetCodeFromEntity(Entity ent)
+		{
+			if (ent == null)
+				return null;
+
+			ResultBuffer rb =
+				ent.GetXDataForApplication(SheetCodeAppName);
+
+			if (rb == null)
+				return null;
+
+			TypedValue[] values = rb.AsArray();
+
+			foreach (TypedValue value in values)
+			{
+				if (value.TypeCode != (int)DxfCode.ExtendedDataAsciiString)
+					continue;
+
+				string text = value.Value as string;
+
+				if (!string.IsNullOrWhiteSpace(text))
+					return text.Trim();
+			}
+
+			return null;
+		}
+
+		private static List<Entity> CollectEntitiesBySheetCode(
+			Transaction tr,
+			Database db,
+			string sheetCode)
+		{
+			var result = new List<Entity>();
+
+			BlockTable bt =
+				(BlockTable)tr.GetObject(
+					db.BlockTableId,
+					OpenMode.ForRead);
+
+			BlockTableRecord modelSpace =
+				(BlockTableRecord)tr.GetObject(
+					bt[BlockTableRecord.ModelSpace],
+					OpenMode.ForRead);
+
+			foreach (ObjectId id in modelSpace)
+			{
+				Entity ent =
+					tr.GetObject(id, OpenMode.ForRead) as Entity;
+
+				if (ent == null)
+					continue;
+
+				string code = TryReadSheetCodeFromEntity(ent);
+
+				if (code == sheetCode)
+					result.Add(ent);
+			}
+
+			return result;
+		}
+
+		private static Bounds2D GetBoundsFromEntities(
+			Transaction tr,
+			List<Entity> entities)
+		{
+			Bounds2D result = null;
+
+			foreach (Entity ent in entities)
+			{
+				Bounds2D b = GetEntityWorldBounds(tr, ent);
+
+				if (b == null || !b.IsValid)
+					continue;
+
+				result = UnionBounds(result, b);
+			}
+
+			return result;
+		}
+
+
+
 		[CommandMethod("FLUX_COPY_DETECTED_SHEETS_TO_RIGHT")]
 		public void FluxCopyDetectedSheetsToRight()
 		{
@@ -110,6 +498,7 @@ namespace FluxCad48.Commands
 						tr,
 						db,
 						frames,
+						selectedIds,
 						nextSheetIndex,
 						ed);
 
@@ -481,11 +870,12 @@ namespace FluxCad48.Commands
 		}
 
 		private static List<SheetRegion> BuildSheetRegionsFromDetectedFrames(
-	Transaction tr,
-	Database db,
-	List<SheetFrameCandidate> frames,
-	int startIndex,
-	Editor ed)
+			Transaction tr,
+			Database db,
+			List<SheetFrameCandidate> frames,
+			ObjectId[] selectedIds,
+			int startIndex,
+			Editor ed)
 		{
 			frames = SortFramesTopToBottomLeftToRight(frames);
 
@@ -509,7 +899,7 @@ namespace FluxCad48.Commands
 					bt[BlockTableRecord.ModelSpace],
 					OpenMode.ForRead);
 
-			foreach (ObjectId id in modelSpace)
+			foreach (ObjectId id in selectedIds)
 			{
 				Entity ent =
 					tr.GetObject(id, OpenMode.ForRead) as Entity;
@@ -517,10 +907,21 @@ namespace FluxCad48.Commands
 				if (ent == null)
 					continue;
 
-				if (IsFluxGeneratedEntity(ent))
+				if (IsCopyCommandGeneratedMarker(ent))
+				{
+					ed.WriteMessage(
+						"\n[SkipFluxGenerated] Handle=" +
+						ent.Handle +
+						", Type=" +
+						ent.GetType().Name +
+						", Layer=" +
+						ent.Layer);
+
 					continue;
+				}
 
 				int ownerIndex = -1;
+				Bounds2D entityBounds = null;
 
 				Line line = ent as Line;
 
@@ -534,20 +935,52 @@ namespace FluxCad48.Commands
 
 				if (ownerIndex < 0)
 				{
-					Bounds2D b =
-						GetEntityWorldBounds(tr, ent);
+					entityBounds = GetEntityWorldBounds(tr, ent);
 
-					if (b == null || !b.IsValid)
-						continue;
+					if (IsUsableBoundsForOwnership(entityBounds))
+					{
+						ownerIndex =
+							FindBestOwningSheetIndex(
+								frames,
+								entityBounds);
+					}
+				}
 
+				if (ownerIndex < 0 && IsUsableBoundsForOwnership(entityBounds))
+				{
 					ownerIndex =
-						FindBestOwningSheetIndex(
+						FindBestOwningSheetIndexForBoundsEvenIfFlat(
 							frames,
-							b);
+							entityBounds);
 				}
 
 				if (ownerIndex < 0)
+				{
+					BlockReference br = ent as BlockReference;
+
+					if (br != null)
+					{
+						ownerIndex =
+							FindBestOwningSheetIndexForPoint(
+								frames,
+								br.Position);
+					}
+				}
+
+				if (ownerIndex < 0)
+				{
+					ed.WriteMessage(
+						"\n[SkipUnownedEntity] Handle=" +
+						ent.Handle +
+						", Type=" +
+						ent.GetType().Name +
+						", Layer=" +
+						ent.Layer +
+						", Bounds=" +
+						entityBounds);
+
 					continue;
+				}
 
 				if (ownerIndex >= allSheets.Count)
 				{
@@ -605,9 +1038,81 @@ namespace FluxCad48.Commands
 			return result;
 		}
 
-		private static int FindBestOwningSheetIndex(
+		private static int FindBestOwningSheetIndexForBoundsEvenIfFlat(
+			List<SheetFrameCandidate> frames,
+			Bounds2D entityBounds)
+		{
+			if (frames == null || entityBounds == null)
+				return -1;
+
+			for (int i = 0; i < frames.Count; i++)
+			{
+				Bounds2D frameBounds = frames[i].Bounds;
+
+				if (frameBounds == null || !frameBounds.IsValid)
+					continue;
+
+				double tol = 2.0;
+
+				bool inside =
+					entityBounds.MinX >= frameBounds.MinX - tol &&
+					entityBounds.MaxX <= frameBounds.MaxX + tol &&
+					entityBounds.MinY >= frameBounds.MinY - tol &&
+					entityBounds.MaxY <= frameBounds.MaxY + tol;
+
+				if (inside)
+					return i;
+			}
+
+			return -1;
+		}
+
+		private static bool IsUsableBoundsForOwnership(Bounds2D b)
+		{
+			if (b == null)
+				return false;
+
+			if (b.Width < 0.0)
+				return false;
+
+			if (b.Height < 0.0)
+				return false;
+
+			return true;
+		}
+
+
+		private static int FindBestOwningSheetIndexForPoint(
 	List<SheetFrameCandidate> frames,
-	Bounds2D entityBounds)
+	Point3d point)
+		{
+			if (frames == null || frames.Count == 0)
+				return -1;
+
+			for (int i = 0; i < frames.Count; i++)
+			{
+				Bounds2D b = frames[i].Bounds;
+
+				if (b == null || !b.IsValid)
+					continue;
+
+				if (point.X >= b.MinX &&
+					point.X <= b.MaxX &&
+					point.Y >= b.MinY &&
+					point.Y <= b.MaxY)
+				{
+					return i;
+				}
+			}
+
+			return -1;
+		}
+
+
+
+		private static int FindBestOwningSheetIndex(
+			List<SheetFrameCandidate> frames,
+			Bounds2D entityBounds)
 		{
 			if (frames == null || frames.Count == 0)
 				return -1;
@@ -636,8 +1141,8 @@ namespace FluxCad48.Commands
 		}
 
 		private static double GetSheetOwnershipScore(
-	Bounds2D frameBounds,
-	Bounds2D entityBounds)
+			Bounds2D frameBounds,
+			Bounds2D entityBounds)
 		{
 			if (frameBounds == null || !frameBounds.IsValid)
 				return 0.0;
@@ -694,8 +1199,8 @@ namespace FluxCad48.Commands
 		}
 
 		private static int FindBestOwningSheetIndexForLine(
-	List<SheetFrameCandidate> frames,
-	Line line)
+			List<SheetFrameCandidate> frames,
+			Line line)
 		{
 			if (frames == null || line == null)
 				return -1;
@@ -728,9 +1233,9 @@ namespace FluxCad48.Commands
 		}
 
 		private static double GetLineOwnershipScore(
-	Bounds2D frameBounds,
-	Point3d p1,
-	Point3d p2)
+			Bounds2D frameBounds,
+			Point3d p1,
+			Point3d p2)
 		{
 			if (frameBounds == null || !frameBounds.IsValid)
 				return 0.0;
@@ -768,9 +1273,9 @@ namespace FluxCad48.Commands
 		}
 
 		private static bool IsPointInsideBounds(
-	Bounds2D bounds,
-	Point3d p,
-	double tol)
+			Bounds2D bounds,
+			Point3d p,
+			double tol)
 		{
 			if (p.X < bounds.MinX - tol)
 				return false;
@@ -788,9 +1293,9 @@ namespace FluxCad48.Commands
 		}
 
 		private static bool IsBoundsOverlappedWithTolerance(
-	Bounds2D a,
-	Bounds2D b,
-	double tol)
+			Bounds2D a,
+			Bounds2D b,
+			double tol)
 		{
 			if (a.MaxX + tol < b.MinX)
 				return false;
@@ -807,7 +1312,7 @@ namespace FluxCad48.Commands
 			return true;
 		}
 
-
+		// = 분석 대상에서 Flux 흔적 전체 제외
 		private static bool IsFluxGeneratedEntity(Entity ent)
 		{
 			if (ent == null)
@@ -822,6 +1327,21 @@ namespace FluxCad48.Commands
 			ResultBuffer rb = ent.GetXDataForApplication(SheetCodeAppName);
 
 			if (rb != null)
+				return true;
+
+			return false;
+		}
+
+		// = 복사할 때 방해되는 마커 레이어만 제외
+		private static bool IsCopyCommandGeneratedMarker(Entity ent)
+		{
+			if (ent == null)
+				return false;
+
+			if (ent.Layer == CopiedLayerName)
+				return true;
+
+			if (ent.Layer == MarkerLayerName)
 				return true;
 
 			return false;

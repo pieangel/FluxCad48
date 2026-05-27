@@ -1,8 +1,10 @@
 ﻿using Bricscad.ApplicationServices;
 using Bricscad.EditorInput;
+using FluxCad48.Brics;
 using FluxCad48.Geometry;
 using FluxCad48.ShapeViewAnalysis;
 using FluxCad48.ShapeViewAnalysis.Loops;
+using FluxCad48.Sheets;
 using System;
 using System.Collections.Generic;
 using Teigha.DatabaseServices;
@@ -13,6 +15,194 @@ namespace FluxCad48.Commands
 {
 	public class FluxDebugViewIslandsCommand
 	{
+		[CommandMethod("FLUX_DEBUG_CONTAINING_SHEET_FRAME")]
+		public void FluxDebugContainingSheetFrame()
+		{
+			Document doc = Application.DocumentManager.MdiActiveDocument;
+			Database db = doc.Database;
+			Editor ed = doc.Editor;
+
+			PromptSelectionResult psr = ed.GetSelection();
+
+			if (psr.Status != PromptStatus.OK)
+			{
+				ed.WriteMessage("\n선택된 객체가 없습니다.");
+				return;
+			}
+
+			ObjectId[] ids = psr.Value.GetObjectIds();
+
+			using (Transaction tr = db.TransactionManager.StartTransaction())
+			{
+				List<Entity> selectedEntities = new List<Entity>();
+
+				foreach (ObjectId id in ids)
+				{
+					Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+					if (ent == null)
+						continue;
+
+					selectedEntities.Add(ent);
+				}
+
+				Bounds2D selectedBounds =
+					GetBoundsFromEntities(selectedEntities);
+
+				if (selectedBounds == null || !selectedBounds.IsValid)
+				{
+					ed.WriteMessage("\n[ContainingFrameTest] 선택 객체 Bounds를 계산하지 못했습니다.");
+					tr.Commit();
+					return;
+				}
+
+				ed.WriteMessage(
+					"\n[ContainingFrameTest] SelectedEntities=" +
+					selectedEntities.Count +
+					", SelectedBounds=" +
+					selectedBounds);
+
+				List<Entity> modelSpaceEntities =
+					CollectModelSpaceEntities(db, tr);
+
+				ed.WriteMessage(
+					"\n[ContainingFrameTest] ModelSpaceEntities=" +
+					modelSpaceEntities.Count);
+
+				SheetFrameCandidate best =
+					SheetFrameDetector.FindOwningFrameWithExpansion(
+						selectedEntities,
+						modelSpaceEntities,
+						ed);
+
+				if (best == null)
+				{
+					ed.WriteMessage("\n소속 SheetFrame 후보를 찾지 못했습니다.");
+					tr.Commit();
+					return;
+				}
+
+				ed.WriteMessage(
+					"\n[ContainingFrameTest] BestFrame=" +
+					best.Handle +
+					", Type=" + best.EntityType +
+					", Bounds=" + best.Bounds +
+					", Score=" + best.Score);
+
+				DrawDebugRectangle(
+					tr,
+					db,
+					best.Bounds,
+					"FLUX_MARKER",
+					1);
+
+				tr.Commit();
+			}
+		}
+
+		private static List<Entity> CollectModelSpaceEntities(
+			Database db,
+			Transaction tr)
+		{
+			var result = new List<Entity>();
+
+			BlockTable bt =
+				(BlockTable)tr.GetObject(
+					db.BlockTableId,
+					OpenMode.ForRead);
+
+			BlockTableRecord ms =
+				(BlockTableRecord)tr.GetObject(
+					bt[BlockTableRecord.ModelSpace],
+					OpenMode.ForRead);
+
+			foreach (ObjectId id in ms)
+			{
+				Entity ent =
+					tr.GetObject(id, OpenMode.ForRead) as Entity;
+
+				if (ent == null)
+					continue;
+
+				result.Add(ent);
+			}
+
+			return result;
+		}
+
+		private static void DrawDebugRectangle(
+			Transaction tr,
+			Database db,
+			Bounds2D bounds,
+			string layerName,
+			short colorIndex)
+		{
+			if (bounds == null || !bounds.IsValid)
+				return;
+
+			BricscadEntityTools.EnsureLayer(tr, db, layerName);
+
+			BlockTable bt =
+				(BlockTable)tr.GetObject(
+					db.BlockTableId,
+					OpenMode.ForRead);
+
+			BlockTableRecord modelSpace =
+				(BlockTableRecord)tr.GetObject(
+					bt[BlockTableRecord.ModelSpace],
+					OpenMode.ForWrite);
+
+			Polyline rect =
+				BricscadEntityTools.CreateRectanglePolyline(bounds);
+
+			rect.Layer = layerName;
+			rect.Color =
+				Teigha.Colors.Color.FromColorIndex(
+					Teigha.Colors.ColorMethod.ByAci,
+					colorIndex);
+
+			rect.LineWeight = LineWeight.LineWeight050;
+
+			modelSpace.AppendEntity(rect);
+			tr.AddNewlyCreatedDBObject(rect, true);
+		}
+
+		private static Bounds2D GetBoundsFromEntities(
+			IReadOnlyList<Entity> entities)
+		{
+			Bounds2D result = null;
+
+			foreach (Entity ent in entities)
+			{
+				if (ent == null)
+					continue;
+
+				Bounds2D b = BricscadEntityTools.GetEntityBounds(ent);
+
+				if (b == null || !b.IsValid)
+					continue;
+
+				if (result == null)
+				{
+					result = new Bounds2D(
+						b.MinX,
+						b.MinY,
+						b.MaxX,
+						b.MaxY);
+				}
+				else
+				{
+					result = new Bounds2D(
+						System.Math.Min(result.MinX, b.MinX),
+						System.Math.Min(result.MinY, b.MinY),
+						System.Math.Max(result.MaxX, b.MaxX),
+						System.Math.Max(result.MaxY, b.MaxY));
+				}
+			}
+
+			return result;
+		}
+
+
 		[CommandMethod("FLUX_COPY_VIEW_ISLAND_LOOP_ENTITIES_BELOW")]
 		public void CopyViewIslandLoopEntitiesBelow()
 		{
@@ -140,7 +330,7 @@ namespace FluxCad48.Commands
 		}
 
 		private static List<SheetEntity> CollectLoopExtractableEntitiesForWorkspace(
-	ViewIsland island)
+			ViewIsland island)
 		{
 			List<SheetEntity> result = new List<SheetEntity>();
 
@@ -192,11 +382,11 @@ namespace FluxCad48.Commands
 		}
 
 		private static void AddIslandLabel(
-	BlockTableRecord space,
-	Transaction tr,
-	ViewIsland island,
-	double x,
-	double y)
+			BlockTableRecord space,
+			Transaction tr,
+			ViewIsland island,
+			double x,
+			double y)
 		{
 			DBText text = new DBText();
 
@@ -231,9 +421,9 @@ namespace FluxCad48.Commands
 		}
 
 		private static Entity CreateEntityFromSheetEntity(
-	SheetEntity e,
-	double dx,
-	double dy)
+			SheetEntity e,
+			double dx,
+			double dy)
 		{
 			if (e == null)
 				return null;

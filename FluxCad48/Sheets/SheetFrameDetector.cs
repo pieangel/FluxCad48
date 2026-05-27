@@ -19,7 +19,8 @@ namespace FluxCad48.Sheets
 				selectedEntities,
 				null,
 				false,
-				ed);
+				ed,
+				true); // 기존 방식: 중첩 프레임 제거
 		}
 
 		private static bool IsFrameLikeEntity(Entity ent, Bounds2D bounds)
@@ -209,18 +210,15 @@ namespace FluxCad48.Sheets
 			Bounds2D pickBounds,
 			Editor ed = null)
 		{
-			return DetectCore(
-				selectedEntities,
-				pickBounds,
-				true,
-				ed);
+			return DetectCore(selectedEntities, pickBounds, true, ed, true);
 		}
 
 		private static List<SheetFrameCandidate> DetectCore(
 			IReadOnlyList<Entity> selectedEntities,
 			Bounds2D pickBounds,
 			bool hasPickBounds,
-			Editor ed)
+			Editor ed,
+			bool resolveNestedFrames)
 		{
 			var candidates = new List<SheetFrameCandidate>();
 
@@ -273,9 +271,29 @@ namespace FluxCad48.Sheets
 
 			ed?.WriteMessage($"\n[FrameDetect] AfterDuplicateFilter={candidates.Count}");
 
-			var filtered = ResolveOverlappingFrameCandidates(candidates);
 
-			ed?.WriteMessage($"\n[FrameDetect] AfterOverlapFilter={filtered.Count}");
+			foreach (SheetFrameCandidate c in candidates)
+			{
+				ed?.WriteMessage(
+					"\n[RawFrameCandidate] Handle=" + c.Handle +
+					", Type=" + c.EntityType +
+					", Bounds=" + c.Bounds +
+					", Score=" + c.Score +
+					", InsideCount=" + c.InsideEntityCount);
+			}
+
+			List<SheetFrameCandidate> filtered;
+
+			if (resolveNestedFrames)
+			{
+				filtered = ResolveOverlappingFrameCandidates(candidates);
+				ed?.WriteMessage($"\n[FrameDetect] AfterOverlapFilter={filtered.Count}");
+			}
+			else
+			{
+				filtered = candidates;
+				ed?.WriteMessage($"\n[FrameDetect] SkipOverlapFilter={filtered.Count}");
+			}
 
 			if (hasPickBounds)
 			{
@@ -594,19 +612,39 @@ namespace FluxCad48.Sheets
 		}
 
 		public static List<SheetFrameCandidate> DetectContainingFrames(
-	IReadOnlyList<Entity> searchEntities,
-	Bounds2D selectedBounds,
-	Editor ed = null)
+			IReadOnlyList<Entity> searchEntities,
+			Bounds2D selectedBounds,
+			Editor ed = null)
 		{
 			List<SheetFrameCandidate> frames =
-				DetectCore(searchEntities, null, false, ed);
+				DetectCore(searchEntities, null, false, ed, false);
 
 			var result = new List<SheetFrameCandidate>();
 
 			foreach (SheetFrameCandidate frame in frames)
 			{
-				if (IsBoundsInsideFrame(selectedBounds, frame.Bounds))
+				double centerRatio =
+					GetEntityCenterInsideRatio(
+						searchEntities,
+						frame.Bounds);
+
+				bool accepted = centerRatio >= 0.70;
+
+				ed?.WriteMessage(
+					"\n[ContainingCheck] Handle=" + frame.Handle +
+					", Type=" + frame.EntityType +
+					", CenterRatio=" + centerRatio.ToString("0.000") +
+					", Accepted=" + accepted +
+					", FrameBounds=" + frame.Bounds +
+					", SelectedBounds=" + selectedBounds);
+
+				if (accepted)
 					result.Add(frame);
+				else
+					LogEntitiesOutsideFrame(
+						searchEntities,
+						frame.Bounds,
+						ed);
 			}
 
 			ed?.WriteMessage(
@@ -616,6 +654,64 @@ namespace FluxCad48.Sheets
 				.OrderBy(f => f.Bounds.Area)
 				.ThenByDescending(f => f.Score)
 				.ToList();
+		}
+
+		private static double GetEntityCenterInsideRatio(
+			IReadOnlyList<Entity> entities,
+			Bounds2D frameBounds)
+		{
+			int total = 0;
+			int inside = 0;
+
+			foreach (Entity ent in entities)
+			{
+				Bounds2D b =
+					BricscadEntityTools.GetEntityBounds(ent);
+
+				if (b == null || !b.IsValid)
+					continue;
+
+				total++;
+
+				if (ContainsCenter(frameBounds, b))
+					inside++;
+			}
+
+			if (total == 0)
+				return 0.0;
+
+			return (double)inside / (double)total;
+		}
+
+		private static void LogEntitiesOutsideFrame(
+			IReadOnlyList<Entity> entities,
+			Bounds2D frameBounds,
+			Editor ed)
+		{
+			double tol = 5.0;
+
+			foreach (Entity ent in entities)
+			{
+				Bounds2D b = BricscadEntityTools.GetEntityBounds(ent);
+
+				if (b == null || !b.IsValid)
+					continue;
+
+				bool outside =
+					b.MinX < frameBounds.MinX - tol ||
+					b.MaxX > frameBounds.MaxX + tol ||
+					b.MinY < frameBounds.MinY - tol ||
+					b.MaxY > frameBounds.MaxY + tol;
+
+				if (!outside)
+					continue;
+
+				ed?.WriteMessage(
+					"\n[OutsideFrameEntity] Handle=" + ent.Handle +
+					", Type=" + ent.GetType().Name +
+					", Layer=" + ent.Layer +
+					", Bounds=" + b);
+			}
 		}
 
 		private static bool IsBoundsInsideFrame(
@@ -642,6 +738,240 @@ namespace FluxCad48.Sheets
 				inner.MaxX <= frame.MaxX + tol &&
 				inner.MinY >= frame.MinY - tol &&
 				inner.MaxY <= frame.MaxY + tol;
+		}
+
+		public static SheetFrameCandidate FindOwningFrameWithExpansion(
+			IReadOnlyList<Entity> selectedEntities,
+			IReadOnlyList<Entity> modelSpaceEntities,
+			Editor ed = null)
+		{
+			if (selectedEntities == null || selectedEntities.Count == 0)
+				return null;
+
+			Bounds2D selectedBounds = CalculateEntitiesBounds(selectedEntities);
+
+			if (selectedBounds == null || !selectedBounds.IsValid)
+				return null;
+
+			ed?.WriteMessage(
+				"\n[OwningFrame] SelectedBounds=" + selectedBounds);
+
+			// 1차: 선택된 개체 안에서 직접 프레임 탐색
+			List<SheetFrameCandidate> directFrames =
+				DetectContainingFrames(
+					selectedEntities,
+					selectedBounds,
+					ed);
+
+			SheetFrameCandidate directBest =
+				SelectBestContainingFrame(
+					directFrames,
+					selectedBounds,
+					ed);
+
+			if (directBest != null)
+			{
+				ed?.WriteMessage(
+					"\n[OwningFrame] Found in selectedEntities. Handle=" +
+					directBest.Handle);
+
+				return directBest;
+			}
+
+			// 2차: 선택 Bounds 주변을 단계적으로 확장하면서 탐색
+			double[] expandRatios = new double[]
+			{
+				1.2,
+				1.5,
+				2.0,
+				3.0
+			};
+
+			foreach (double ratio in expandRatios)
+			{
+				Bounds2D searchBounds =
+					ExpandBoundsByRatio(selectedBounds, ratio);
+
+				List<Entity> searchEntities =
+					CollectEntitiesIntersectingBounds(
+						modelSpaceEntities,
+						searchBounds);
+
+				ed?.WriteMessage(
+					"\n[OwningFrame] ExpansionRatio=" + ratio.ToString("0.0") +
+					", SearchBounds=" + searchBounds +
+					", SearchEntities=" + searchEntities.Count);
+
+				if (searchEntities.Count == 0)
+					continue;
+
+				List<SheetFrameCandidate> frames =
+					DetectContainingFrames(
+						searchEntities,
+						selectedBounds,
+						ed);
+
+				SheetFrameCandidate best =
+					SelectBestContainingFrame(
+						frames,
+						selectedBounds,
+						ed);
+
+				if (best != null)
+				{
+					ed?.WriteMessage(
+						"\n[OwningFrame] Found by expansion. Ratio=" +
+						ratio.ToString("0.0") +
+						", Handle=" + best.Handle);
+
+					return best;
+				}
+			}
+
+			ed?.WriteMessage("\n[OwningFrame] Not found.");
+
+			return null;
+		}
+
+		private static Bounds2D CalculateEntitiesBounds(
+			IReadOnlyList<Entity> entities)
+		{
+			Bounds2D result = null;
+
+			foreach (Entity ent in entities)
+			{
+				Bounds2D b = BricscadEntityTools.GetEntityBounds(ent);
+
+				if (b == null || !b.IsValid)
+					continue;
+
+				if (result == null)
+				{
+					result = new Bounds2D(
+						b.MinX,
+						b.MinY,
+						b.MaxX,
+						b.MaxY);
+				}
+				else
+				{
+					result = new Bounds2D(
+						Math.Min(result.MinX, b.MinX),
+						Math.Min(result.MinY, b.MinY),
+						Math.Max(result.MaxX, b.MaxX),
+						Math.Max(result.MaxY, b.MaxY));
+				}
+			}
+
+			return result;
+		}
+
+		private static Bounds2D ExpandBoundsByRatio(
+			Bounds2D bounds,
+			double ratio)
+		{
+			double cx = (bounds.MinX + bounds.MaxX) * 0.5;
+			double cy = (bounds.MinY + bounds.MaxY) * 0.5;
+
+			double halfW = bounds.Width * ratio * 0.5;
+			double halfH = bounds.Height * ratio * 0.5;
+
+			return new Bounds2D(
+				cx - halfW,
+				cy - halfH,
+				cx + halfW,
+				cy + halfH);
+		}
+
+		private static List<Entity> CollectEntitiesIntersectingBounds(
+			IReadOnlyList<Entity> entities,
+			Bounds2D searchBounds)
+		{
+			var result = new List<Entity>();
+
+			foreach (Entity ent in entities)
+			{
+				Bounds2D b = BricscadEntityTools.GetEntityBounds(ent);
+
+				if (b == null || !b.IsValid)
+					continue;
+
+				if (Intersects(searchBounds, b))
+					result.Add(ent);
+			}
+
+			return result;
+		}
+
+		private static bool Intersects(
+			Bounds2D a,
+			Bounds2D b)
+		{
+			if (a.MaxX < b.MinX)
+				return false;
+
+			if (a.MinX > b.MaxX)
+				return false;
+
+			if (a.MaxY < b.MinY)
+				return false;
+
+			if (a.MinY > b.MaxY)
+				return false;
+
+			return true;
+		}
+
+		private static SheetFrameCandidate SelectBestContainingFrame(
+			List<SheetFrameCandidate> frames,
+			Bounds2D selectedBounds,
+			Editor ed = null)
+		{
+			if (frames == null || frames.Count == 0)
+				return null;
+
+			var valid = new List<SheetFrameCandidate>();
+
+			foreach (SheetFrameCandidate frame in frames)
+			{
+				if (frame.Bounds == null || !frame.Bounds.IsValid)
+					continue;
+
+				double areaRatio =
+					frame.Bounds.Area / selectedBounds.Area;
+
+				if (areaRatio > 100.0)
+				{
+					ed?.WriteMessage(
+						"\n[OwningFrame] RejectTooLargeFrame Handle=" +
+						frame.Handle +
+						", AreaRatio=" +
+						areaRatio.ToString("0.0"));
+
+					continue;
+				}
+
+				bool contains =
+					IsBoundsInsideFrame(
+						selectedBounds,
+						frame.Bounds);
+
+				if (!contains)
+					continue;
+
+				valid.Add(frame);
+			}
+
+			ed?.WriteMessage(
+				"\n[OwningFrame] ValidContainingFrames=" + valid.Count);
+
+			if (valid.Count == 0)
+				return null;
+
+			return valid
+				.OrderBy(f => f.Bounds.Area)
+				.ThenByDescending(f => f.Score)
+				.FirstOrDefault();
 		}
 	}
 }
