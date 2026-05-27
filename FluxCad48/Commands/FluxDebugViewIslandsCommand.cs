@@ -517,19 +517,41 @@ namespace FluxCad48.Commands
 			}
 
 			List<SheetEntity> entities = new List<SheetEntity>();
-
+			CopiedSheetSelectionResult sheetResult = null;
 			using (Transaction tr = db.TransactionManager.StartTransaction())
 			{
+				ObjectId pickedId = ObjectId.Null;
+
 				foreach (SelectedObject so in psr.Value)
 				{
 					if (so == null || so.ObjectId.IsNull)
 						continue;
+
+					if (pickedId.IsNull)
+						pickedId = so.ObjectId;
 
 					Entity ent = tr.GetObject(so.ObjectId, OpenMode.ForRead) as Entity;
 					if (ent == null)
 						continue;
 
 					CollectSheetEntities(ent, tr, entities);
+				}
+
+				if (pickedId.IsNull)
+				{
+					AppendLog(ed, "[LoopWorkspace] 유효한 선택 개체가 없습니다.");
+					return;
+				}
+
+				sheetResult = CopiedSheetSelectionService.SelectByPickedEntity(
+					db,
+					tr,
+					pickedId);
+
+				if (!sheetResult.Success || !sheetResult.HasFrameBounds)
+				{
+					AppendLog(ed, "[LoopWorkspace] 복사본 SheetFrame Bounds 계산 실패: " + sheetResult.ErrorMessage);
+					return;
 				}
 
 				tr.Commit();
@@ -545,13 +567,14 @@ namespace FluxCad48.Commands
 
 			ViewIslandRoleClassifier.ClassifyAll(islands);
 
-			CopyLoopEntitiesBelow(db, ed, islands);
+			CopyLoopEntitiesBelow(db, ed, islands, sheetResult.FrameBounds);
 		}
 
 		private static void CopyLoopEntitiesBelow(
 	Database db,
 	Editor ed,
-	List<ViewIsland> islands)
+	List<ViewIsland> islands,
+	Extents3d frameBounds)
 		{
 			if (islands == null || islands.Count == 0)
 			{
@@ -559,19 +582,50 @@ namespace FluxCad48.Commands
 				return;
 			}
 
-			Bounds2D allBounds = GetIslandTotalBounds(islands);
+			List<SheetEntity> allLoopEntities = new List<SheetEntity>();
 
-			if (allBounds == null || !allBounds.IsValid)
+			for (int i = 0; i < islands.Count; i++)
 			{
-				AppendLog(ed, "[LoopWorkspace] 전체 Bounds 계산 실패.");
+				List<SheetEntity> loopEntities =
+					CollectLoopExtractableEntitiesForWorkspace(islands[i]);
+
+				allLoopEntities.AddRange(loopEntities);
+			}
+
+			Bounds2D loopBounds = GetSheetEntityTotalBounds(allLoopEntities);
+
+			if (loopBounds == null || !loopBounds.IsValid)
+			{
+				AppendLog(ed, "[LoopWorkspace] LoopEntity Bounds 계산 실패.");
 				return;
 			}
 
-			// 선택된 형상 영역 전체를 그대로 아래로 평행 이동한다.
-			double gapY = Math.Max(allBounds.Height * 0.35, 300.0);
+			double gap = 300.0;
 
-			double dx = 0.0;
-			double dy = -(allBounds.Height + gapY);
+			double dx = frameBounds.MinPoint.X - loopBounds.MinX;
+			double dy = (frameBounds.MinPoint.Y - gap) - loopBounds.MaxY;
+
+			AppendLog(ed, string.Format(
+				"[LoopWorkspace] FrameBounds Min=({0:0.###},{1:0.###}) Max=({2:0.###},{3:0.###})",
+				frameBounds.MinPoint.X,
+				frameBounds.MinPoint.Y,
+				frameBounds.MaxPoint.X,
+				frameBounds.MaxPoint.Y));
+
+			AppendLog(ed, string.Format(
+				"[LoopWorkspace] LoopEntityBounds Min=({0:0.###},{1:0.###}) Max=({2:0.###},{3:0.###}) W={4:0.###}, H={5:0.###}",
+				loopBounds.MinX,
+				loopBounds.MinY,
+				loopBounds.MaxX,
+				loopBounds.MaxY,
+				loopBounds.Width,
+				loopBounds.Height));
+
+			AppendLog(ed, string.Format(
+				"[LoopWorkspace] Placement dx={0:0.###}, dy={1:0.###}, gap={2:0.###}",
+				dx,
+				dy,
+				gap));
 
 			using (Transaction tr = db.TransactionManager.StartTransaction())
 			{
@@ -622,6 +676,40 @@ namespace FluxCad48.Commands
 				tr.Commit();
 			}
 		}
+
+
+		private static Bounds2D GetSheetEntityTotalBounds(List<SheetEntity> entities)
+		{
+			if (entities == null || entities.Count == 0)
+				return null;
+
+			Bounds2D result = null;
+
+			for (int i = 0; i < entities.Count; i++)
+			{
+				SheetEntity ent = entities[i];
+
+				if (ent == null || ent.Bounds == null || !ent.Bounds.IsValid)
+					continue;
+
+				if (result == null)
+				{
+					result = new Bounds2D(
+						ent.Bounds.MinX,
+						ent.Bounds.MinY,
+						ent.Bounds.MaxX,
+						ent.Bounds.MaxY);
+				}
+				else
+				{
+					result.ExpandToInclude(ent.Bounds);
+				}
+			}
+
+			return result;
+		}
+
+
 
 		private static List<SheetEntity> CollectLoopExtractableEntitiesForWorkspace(
 			ViewIsland island)

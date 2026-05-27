@@ -113,6 +113,8 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="ShapeViewAnalysis\BoundsTools.cs" />
     <Compile Include="ShapeViewAnalysis\ClosedLoopInfo.cs" />
+    <Compile Include="ShapeViewAnalysis\CopiedSheetSelectionResult.cs" />
+    <Compile Include="ShapeViewAnalysis\CopiedSheetSelectionService.cs" />
     <Compile Include="ShapeViewAnalysis\Loops\ClosedLoopCandidate.cs" />
     <Compile Include="ShapeViewAnalysis\Loops\ClosedLoopDebugDrawer.cs" />
     <Compile Include="ShapeViewAnalysis\Loops\ClosedLoopExtractionResult.cs" />

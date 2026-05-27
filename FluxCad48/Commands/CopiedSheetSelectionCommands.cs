@@ -1,5 +1,6 @@
 ﻿using Bricscad.ApplicationServices;
 using Bricscad.EditorInput;
+using FluxCad48.ShapeViewAnalysis;
 using System;
 using System.Collections.Generic;
 using Teigha.DatabaseServices;
@@ -12,6 +13,50 @@ namespace FluxCad48.Commands
 	{
 		[CommandMethod("FLUX_SELECT_COPIED_SHEET_BY_PICK")]
 		public void SelectCopiedSheetByPick()
+		{
+			Document doc = Application.DocumentManager.MdiActiveDocument;
+			Editor ed = doc.Editor;
+			Database db = doc.Database;
+
+			PromptEntityOptions peo = new PromptEntityOptions(
+				"\n복사된 쉬트 프레임 안의 아무 개체나 선택하세요: ");
+
+			PromptEntityResult per = ed.GetEntity(peo);
+
+			if (per.Status != PromptStatus.OK)
+			{
+				AppendLog(ed, "[SelectCopiedSheet] 선택이 취소되었습니다.");
+				return;
+			}
+
+			using (Transaction tr = db.TransactionManager.StartTransaction())
+			{
+				CopiedSheetSelectionResult result =
+					CopiedSheetSelectionService.SelectByPickedEntity(db, tr, per.ObjectId);
+
+				if (!result.Success)
+				{
+					AppendLog(ed, "[SelectCopiedSheet] 실패: " + result.ErrorMessage);
+					return;
+				}
+
+				ed.SetImpliedSelection(result.SelectedIds.ToArray());
+
+				AppendLog(ed, "[SelectCopiedSheet] Picked SheetCode=" + result.SheetCode);
+				AppendLog(ed, "[SelectCopiedSheet] 선택 완료. Group Entity Count=" + result.SelectedIds.Count);
+
+				if (result.HasGroupBounds)
+					AppendBounds(ed, "[SelectCopiedSheet] GroupBounds", result.GroupBounds);
+
+				if (result.HasFrameBounds)
+					AppendBounds(ed, "[SelectCopiedSheet] FrameBounds", result.FrameBounds);
+
+				tr.Commit();
+			}
+		}
+
+		[CommandMethod("FLUX_SELECT_COPIED_SHEET_BY_PICK_LEGACY")]
+		public void SelectCopiedSheetByPick_Legacy()
 		{
 			Document doc = Application.DocumentManager.MdiActiveDocument;
 			Editor ed = doc.Editor;
