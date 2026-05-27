@@ -2,7 +2,10 @@
 using Bricscad.EditorInput;
 using FluxCad48.Brics;
 using FluxCad48.Geometry;
+using FluxCad48.ShapeViewAnalysis;
+using FluxCad48.ShapeViewAnalysis.Loops;
 using FluxCad48.Sheets;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Teigha.Colors;
@@ -17,6 +20,11 @@ namespace FluxCad48.Commands
 		private const string CopiedLayerName = "FLUX_COPIED";
 		private const string MarkerLayerName = "FLUX_MARKER";
 		private const string SheetCodeAppName = "FLUX_SHEET";
+
+		private static void AppendLog(Editor ed, string message)
+		{
+			ed.WriteMessage("\n" + message);
+		}
 
 		[CommandMethod("FLUX_DEBUG_MARK_ENTITY_BY_HANDLE")]
 		public void FluxDebugMarkEntityByHandle()
@@ -227,7 +235,7 @@ namespace FluxCad48.Commands
 		}
 
 
-		[CommandMethod("FLUX_DEBUG_ANALYZE_COPIED_SHEET")]
+		[CommandMethod("FLUX_DEBUG_ANALYZE_COPIED_SHEET_V2")]
 		public void FluxDebugAnalyzeCopiedSheet()
 		{
 			Document doc = Application.DocumentManager.MdiActiveDocument;
@@ -320,7 +328,7 @@ namespace FluxCad48.Commands
 				tr.Commit();
 
 				ed.WriteMessage(
-					"\nFLUX_DEBUG_ANALYZE_COPIED_SHEET 완료.");
+					"\nFLUX_DEBUG_ANALYZE_COPIED_SHEET_V2 완료.");
 			}
 		}
 

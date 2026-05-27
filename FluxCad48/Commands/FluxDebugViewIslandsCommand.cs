@@ -15,6 +15,285 @@ namespace FluxCad48.Commands
 {
 	public class FluxDebugViewIslandsCommand
 	{
+		[CommandMethod("FLUX_DEBUG_ANALYZE_COPIED_SHEET")]
+		public void AnalyzeCopiedSheet()
+		{
+			Document doc = Application.DocumentManager.MdiActiveDocument;
+			Editor ed = doc.Editor;
+			Database db = doc.Database;
+
+			PromptSelectionOptions pso = new PromptSelectionOptions();
+			pso.MessageForAdding =
+				"\n복사된 쉬트 안에서 ClosedLoop를 확인할 형상 개체들을 선택하세요: ";
+
+			PromptSelectionResult psr = ed.GetSelection(pso);
+
+			if (psr.Status != PromptStatus.OK)
+			{
+				AppendLog(ed, "[AnalyzeCopiedSheet] 선택이 취소되었습니다.");
+				return;
+			}
+
+			List<SheetEntity> entities = new List<SheetEntity>();
+
+			using (Transaction tr = db.TransactionManager.StartTransaction())
+			{
+				foreach (SelectedObject so in psr.Value)
+				{
+					if (so == null || so.ObjectId.IsNull)
+						continue;
+
+					Entity ent = tr.GetObject(so.ObjectId, OpenMode.ForRead) as Entity;
+					if (ent == null)
+						continue;
+
+					CollectSheetEntities(ent, tr, entities);
+				}
+
+				tr.Commit();
+			}
+
+			AppendLog(ed, "");
+			AppendLog(ed, "[AnalyzeCopiedSheet] SelectedSheetEntities=" + entities.Count);
+
+			SelectedShapeViewSet set = SelectedShapeViewClassifier.Classify(entities);
+
+			AppendLog(ed, string.Format(
+				"[AnalyzeCopiedSheet] Geometry={0}, Dimension={1}, Text={2}, Unknown={3}",
+				set.GeometryEntities.Count,
+				set.DimensionEntities.Count,
+				set.TextEntities.Count,
+				set.UnknownEntities.Count));
+
+			ViewIslandBuildOptions options = new ViewIslandBuildOptions();
+
+			List<ViewIsland> islands = ViewIslandBuilder.Build(
+				set.GeometryEntities,
+				options);
+
+			ViewIslandRoleClassifier.ClassifyAll(islands);
+
+			AppendLog(ed, "[AnalyzeCopiedSheet] IslandCount=" + islands.Count);
+
+			Bounds2D sheetBounds = GetBoundsFromSheetEntities(entities);
+
+			if (sheetBounds == null || !sheetBounds.IsValid)
+			{
+				AppendLog(ed, "[AnalyzeCopiedSheet] SheetBounds 계산 실패.");
+				return;
+			}
+
+			DrawClosedLoopsAndCopyBelowSheetFrame(
+				db,
+				ed,
+				islands,
+				sheetBounds);
+		}
+
+
+		private static string GetSheetCode(Entity ent)
+		{
+			if (ent == null)
+				return null;
+
+			ResultBuffer rb = ent.XData;
+
+			if (rb == null)
+				return null;
+
+			TypedValue[] values = rb.AsArray();
+
+			bool foundFluxSheet = false;
+
+			for (int i = 0; i < values.Length; i++)
+			{
+				TypedValue tv = values[i];
+
+				if (tv.TypeCode == 1001)
+				{
+					string app = tv.Value as string;
+
+					foundFluxSheet =
+						string.Equals(
+							app,
+							"FLUX_SHEET",
+							StringComparison.OrdinalIgnoreCase);
+				}
+				else if (foundFluxSheet && tv.TypeCode == 1000)
+				{
+					return tv.Value as string;
+				}
+			}
+
+			return null;
+		}
+
+		private static Bounds2D GetSheetBoundsFromSheetCode(
+	Database db,
+	Transaction tr,
+	string sheetCode)
+		{
+			Bounds2D result = null;
+
+			BlockTable bt =
+				(BlockTable)tr.GetObject(
+					db.BlockTableId,
+					OpenMode.ForRead);
+
+			BlockTableRecord ms =
+				(BlockTableRecord)tr.GetObject(
+					bt[BlockTableRecord.ModelSpace],
+					OpenMode.ForRead);
+
+			foreach (ObjectId id in ms)
+			{
+				Entity ent =
+					tr.GetObject(id, OpenMode.ForRead) as Entity;
+
+				if (ent == null)
+					continue;
+
+				string code = GetSheetCode(ent);
+
+				if (!string.Equals(code, sheetCode))
+					continue;
+
+				Bounds2D b =
+					BricscadEntityTools.GetEntityBounds(ent);
+
+				if (b == null || !b.IsValid)
+					continue;
+
+				if (result == null)
+				{
+					result = new Bounds2D(
+						b.MinX,
+						b.MinY,
+						b.MaxX,
+						b.MaxY);
+				}
+				else
+				{
+					result.ExpandToInclude(b);
+				}
+			}
+
+			return result;
+		}
+
+		private static Bounds2D GetBoundsFromSheetEntities(
+	IReadOnlyList<SheetEntity> entities)
+		{
+			Bounds2D result = null;
+
+			for (int i = 0; i < entities.Count; i++)
+			{
+				SheetEntity e = entities[i];
+
+				if (e == null || e.Bounds == null || !e.Bounds.IsValid)
+					continue;
+
+				if (result == null)
+				{
+					result = new Bounds2D(
+						e.Bounds.MinX,
+						e.Bounds.MinY,
+						e.Bounds.MaxX,
+						e.Bounds.MaxY);
+				}
+				else
+				{
+					result.ExpandToInclude(e.Bounds);
+				}
+			}
+
+			return result;
+		}
+
+		private static void DrawClosedLoopsAndCopyBelowSheetFrame(
+	Database db,
+	Editor ed,
+	List<ViewIsland> islands,
+	Bounds2D sheetBounds)
+		{
+			if (islands == null || islands.Count == 0)
+			{
+				AppendLog(ed, "[AnalyzeCopiedSheet] ViewIsland가 없습니다.");
+				return;
+			}
+
+			LoopExtractionOptions loopOptions = new LoopExtractionOptions();
+			ViewIslandClosedLoopBuilder builder = new ViewIslandClosedLoopBuilder();
+
+			Bounds2D islandBounds = GetIslandTotalBounds(islands);
+
+			if (islandBounds == null || !islandBounds.IsValid)
+			{
+				AppendLog(ed, "[AnalyzeCopiedSheet] IslandBounds 계산 실패.");
+				return;
+			}
+
+			double gapY = Math.Max(sheetBounds.Height * 0.05, 100.0);
+
+			double dx = sheetBounds.MinX - islandBounds.MinX;
+			double dy = sheetBounds.MinY - gapY - islandBounds.Height - islandBounds.MinY;
+
+			using (Transaction tr = db.TransactionManager.StartTransaction())
+			{
+				BlockTableRecord space =
+					tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite) as BlockTableRecord;
+
+				if (space == null)
+					return;
+
+				for (int i = 0; i < islands.Count; i++)
+				{
+					ViewIsland island = islands[i];
+
+					ClosedLoopExtractionResult result =
+						builder.Build(island, loopOptions);
+
+					AppendLog(ed, string.Format(
+						"[AnalyzeCopiedSheet Loop Island {0}] Segments={1}, ClosedLoops={2}, OpenChains={3}, LargestArea={4:0.###}",
+						island.Index,
+						result.InputSegments.Count,
+						result.ClosedLoops.Count,
+						result.OpenChains.Count,
+						result.LargestLoopArea));
+
+					List<SheetEntity> loopEntities =
+						CollectLoopExtractableEntitiesForWorkspace(island);
+
+					for (int j = 0; j < loopEntities.Count; j++)
+					{
+						SheetEntity e = loopEntities[j];
+
+						if (e == null)
+							continue;
+
+						Entity copied = CreateEntityFromSheetEntity(e, dx, dy);
+
+						if (copied == null)
+							continue;
+
+						copied.ColorIndex = 7;
+
+						space.AppendEntity(copied);
+						tr.AddNewlyCreatedDBObject(copied, true);
+					}
+
+					AppendLog(ed, string.Format(
+						"[AnalyzeCopiedSheet Copy] Island={0}, LoopEntities={1}, dx={2:0.###}, dy={3:0.###}",
+						island.Index,
+						loopEntities.Count,
+						dx,
+						dy));
+				}
+
+				tr.Commit();
+			}
+		}
+
 		[CommandMethod("FLUX_DEBUG_CONTAINING_SHEET_FRAME")]
 		public void FluxDebugContainingSheetFrame()
 		{
