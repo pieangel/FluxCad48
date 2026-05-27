@@ -778,7 +778,7 @@ namespace FluxCad48.Commands
 
 			if (existingCopiedBounds != null && existingCopiedBounds.IsValid)
 			{
-				cursorTopY = existingCopiedBounds.MinY - rowGap;
+				cursorTopY = existingCopiedBounds.MinY - 300.0;
 			}
 
 			double currentRowBottomY = double.MaxValue;
