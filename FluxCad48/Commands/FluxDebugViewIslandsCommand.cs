@@ -35,6 +35,8 @@ namespace FluxCad48.Commands
 			}
 
 			List<SheetEntity> entities = new List<SheetEntity>();
+			string sheetCode = null;
+			Bounds2D sheetBounds = null;
 
 			using (Transaction tr = db.TransactionManager.StartTransaction())
 			{
@@ -47,14 +49,35 @@ namespace FluxCad48.Commands
 					if (ent == null)
 						continue;
 
+					if (string.IsNullOrWhiteSpace(sheetCode))
+						sheetCode = GetSheetCode(ent);
+
 					CollectSheetEntities(ent, tr, entities);
 				}
+
+				if (string.IsNullOrWhiteSpace(sheetCode))
+				{
+					AppendLog(ed, "[AnalyzeCopiedSheet] 선택 Entity에서 SheetCode를 찾지 못했습니다.");
+					tr.Commit();
+					return;
+				}
+
+				sheetBounds = GetBoundsFromSheetEntities(entities);
 
 				tr.Commit();
 			}
 
 			AppendLog(ed, "");
+			AppendLog(ed, "[AnalyzeCopiedSheet] SheetCode=" + sheetCode);
 			AppendLog(ed, "[AnalyzeCopiedSheet] SelectedSheetEntities=" + entities.Count);
+
+			if (sheetBounds == null || !sheetBounds.IsValid)
+			{
+				AppendLog(ed, "[AnalyzeCopiedSheet] SheetCode 기준 SheetBounds 계산 실패.");
+				return;
+			}
+
+			AppendLog(ed, "[AnalyzeCopiedSheet] SheetBounds=" + sheetBounds);
 
 			SelectedShapeViewSet set = SelectedShapeViewClassifier.Classify(entities);
 
@@ -74,14 +97,6 @@ namespace FluxCad48.Commands
 			ViewIslandRoleClassifier.ClassifyAll(islands);
 
 			AppendLog(ed, "[AnalyzeCopiedSheet] IslandCount=" + islands.Count);
-
-			Bounds2D sheetBounds = GetBoundsFromSheetEntities(entities);
-
-			if (sheetBounds == null || !sheetBounds.IsValid)
-			{
-				AppendLog(ed, "[AnalyzeCopiedSheet] SheetBounds 계산 실패.");
-				return;
-			}
 
 			DrawClosedLoopsAndCopyBelowSheetFrame(
 				db,
