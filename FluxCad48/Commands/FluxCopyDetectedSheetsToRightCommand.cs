@@ -522,21 +522,24 @@ namespace FluxCad48.Commands
 				}
 
 				Bounds2D drawingBounds =
-					BricscadEntityTools.GetModelSpaceBounds(tr, db);
+					GetOriginalDrawingBounds(tr, db);
 
 				if (drawingBounds == null || !drawingBounds.IsValid)
 				{
-					ed.WriteMessage("\n전체 도면 Bounds를 계산하지 못했습니다.");
+					ed.WriteMessage("\n원본 도면 Bounds를 계산하지 못했습니다.");
 					return;
 				}
 
 				SheetArrangeOptions options = new SheetArrangeOptions();
 
+				Bounds2D existingCopiedBounds =
+					GetExistingCopiedSheetBounds(tr, db);
+
 				List<SheetPlacement> placements =
-					CreateRowPreservingPlacements(
+					CreateWorkspacePlacements(
 						sheets,
 						drawingBounds,
-						selectionBounds.MaxY,
+						existingCopiedBounds,
 						options,
 						ed);
 
@@ -705,6 +708,184 @@ namespace FluxCad48.Commands
 					"DetectedSheets=" + sheets.Count +
 					", TotalCloned=" + totalCloned);
 			}
+		}
+
+
+		private static Bounds2D GetOriginalDrawingBounds(
+	Transaction tr,
+	Database db)
+		{
+			Bounds2D result = null;
+
+			BlockTable bt =
+				(BlockTable)tr.GetObject(
+					db.BlockTableId,
+					OpenMode.ForRead);
+
+			BlockTableRecord modelSpace =
+				(BlockTableRecord)tr.GetObject(
+					bt[BlockTableRecord.ModelSpace],
+					OpenMode.ForRead);
+
+			foreach (ObjectId id in modelSpace)
+			{
+				Entity ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+
+				if (ent == null)
+					continue;
+
+				if (IsFluxGeneratedEntity(ent))
+					continue;
+
+				Bounds2D b = GetEntityWorldBounds(tr, ent);
+
+				if (b == null || !b.IsValid)
+					continue;
+
+				result = UnionBounds(result, b);
+			}
+
+			return result;
+		}
+
+
+		private static List<SheetPlacement> CreateWorkspacePlacements(
+			List<SheetRegion> sheets,
+			Bounds2D drawingBounds,
+			Bounds2D existingCopiedBounds,
+			SheetArrangeOptions options,
+			Editor ed)
+		{
+			var result = new List<SheetPlacement>();
+
+			if (sheets == null || sheets.Count == 0)
+				return result;
+
+			if (drawingBounds == null || !drawingBounds.IsValid)
+				return result;
+
+			double workspaceOffsetX = 3000.0;
+			double workspaceWidth = 20000.0;
+
+			double columnGap = options.ColumnGap;
+			double rowGap = options.RowGap;
+
+			double startX = drawingBounds.MaxX + workspaceOffsetX;
+			double limitX = startX + workspaceWidth;
+
+			double cursorX = startX;
+			double cursorTopY = drawingBounds.MaxY;
+
+			if (existingCopiedBounds != null && existingCopiedBounds.IsValid)
+			{
+				cursorTopY = existingCopiedBounds.MinY - rowGap;
+			}
+
+			double currentRowBottomY = double.MaxValue;
+			int rowIndex = 0;
+			int columnIndex = 0;
+
+			// 원래 BuildSheetRegionsFromDetectedFrames에서 넘어온 순서 유지
+			List<SheetRegion> ordered = new List<SheetRegion>(sheets);
+
+			for (int i = 0; i < ordered.Count; i++)
+			{
+				SheetRegion sheet = ordered[i];
+
+				double w = sheet.Bounds.Width;
+				double h = sheet.Bounds.Height;
+
+				if (cursorX > startX && cursorX + w > limitX)
+				{
+					cursorX = startX;
+					cursorTopY = currentRowBottomY - rowGap;
+					currentRowBottomY = double.MaxValue;
+
+					rowIndex++;
+					columnIndex = 0;
+				}
+
+				double targetMinX = cursorX;
+				double targetMaxY = cursorTopY;
+
+				double moveX = targetMinX - sheet.Bounds.MinX;
+				double moveY = targetMaxY - sheet.Bounds.MaxY;
+
+				SheetPlacement placement = new SheetPlacement();
+				placement.SourceSheet = sheet;
+				placement.SourceBounds = sheet.Bounds;
+				placement.TargetBottomLeft =
+					new CadPoint2D(targetMinX, targetMaxY - h);
+				placement.MoveX = moveX;
+				placement.MoveY = moveY;
+				placement.RowIndex = rowIndex;
+				placement.ColumnIndex = columnIndex;
+
+				result.Add(placement);
+
+				double placedBottomY = sheet.Bounds.MinY + moveY;
+
+				if (placedBottomY < currentRowBottomY)
+					currentRowBottomY = placedBottomY;
+
+				ed.WriteMessage(
+					"\n[WorkspaceArrange] Row=" + rowIndex +
+					", Col=" + columnIndex +
+					", Sheet=" + GetSheetCode(sheet) +
+					", W=" + w.ToString("0.###") +
+					", H=" + h.ToString("0.###") +
+					", TargetMinX=" + targetMinX.ToString("0.###") +
+					", TargetMaxY=" + targetMaxY.ToString("0.###") +
+					", MoveX=" + moveX.ToString("0.###") +
+					", MoveY=" + moveY.ToString("0.###"));
+
+				cursorX += w + columnGap;
+				columnIndex++;
+			}
+
+			return result;
+		}
+
+		private static Bounds2D GetExistingCopiedSheetBounds(
+			Transaction tr,
+			Database db)
+		{
+			Bounds2D result = null;
+
+			BlockTable bt =
+				(BlockTable)tr.GetObject(
+					db.BlockTableId,
+					OpenMode.ForRead);
+
+			BlockTableRecord modelSpace =
+				(BlockTableRecord)tr.GetObject(
+					bt[BlockTableRecord.ModelSpace],
+					OpenMode.ForRead);
+
+			foreach (ObjectId id in modelSpace)
+			{
+				Entity ent =
+					tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+
+				if (ent == null)
+					continue;
+
+				bool isCopied =
+					ent.Layer == CopiedLayerName ||
+					TryReadSheetCodeFromEntity(ent) != null;
+
+				if (!isCopied)
+					continue;
+
+				Bounds2D b = GetEntityWorldBounds(tr, ent);
+
+				if (b == null || !b.IsValid)
+					continue;
+
+				result = UnionBounds(result, b);
+			}
+
+			return result;
 		}
 
 		private static bool IsLineInsideSheetFrameForCopy(
