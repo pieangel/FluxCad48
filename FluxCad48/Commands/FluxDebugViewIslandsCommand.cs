@@ -1,17 +1,166 @@
-﻿using System;
-using System.Collections.Generic;
-using Bricscad.ApplicationServices;
+﻿using Bricscad.ApplicationServices;
 using Bricscad.EditorInput;
+using FluxCad48.Geometry;
+using FluxCad48.ShapeViewAnalysis;
+using FluxCad48.ShapeViewAnalysis.Loops;
+using System;
+using System.Collections.Generic;
 using Teigha.DatabaseServices;
 using Teigha.Geometry;
 using Teigha.Runtime;
-using FluxCad48.Geometry;
-using FluxCad48.ShapeViewAnalysis;
 
 namespace FluxCad48.Commands
 {
 	public class FluxDebugViewIslandsCommand
 	{
+		[CommandMethod("FLUX_DEBUG_VIEW_ISLAND_CLOSED_LOOP")]
+		public void RunClosedLoop()
+		{
+			Document doc = Application.DocumentManager.MdiActiveDocument;
+			Editor ed = doc.Editor;
+			Database db = doc.Database;
+
+			PromptSelectionOptions pso = new PromptSelectionOptions();
+			pso.MessageForAdding =
+				"\n복사된 쉬트 프레임 안에서 형상 뷰 영역만 선택하세요: ";
+
+			PromptSelectionResult psr = ed.GetSelection(pso);
+
+			if (psr.Status != PromptStatus.OK)
+			{
+				AppendLog(ed, "[ViewIsland] 선택이 취소되었습니다.");
+				return;
+			}
+
+			List<SheetEntity> entities = new List<SheetEntity>();
+
+			using (Transaction tr = db.TransactionManager.StartTransaction())
+			{
+				foreach (SelectedObject so in psr.Value)
+				{
+					if (so == null || so.ObjectId.IsNull)
+						continue;
+
+					Entity ent = tr.GetObject(so.ObjectId, OpenMode.ForRead) as Entity;
+					if (ent == null)
+						continue;
+
+					CollectSheetEntities(ent, tr, entities);
+				}
+
+				tr.Commit();
+			}
+
+			AppendLog(ed, "");
+			AppendLog(ed, "[ViewIsland] Selected=" + entities.Count);
+
+			SelectedShapeViewSet set = SelectedShapeViewClassifier.Classify(entities);
+
+			AppendLog(ed, string.Format(
+				"[ViewIsland] Geometry={0}, Dimension={1}, Text={2}, Unknown={3}",
+				set.GeometryEntities.Count,
+				set.DimensionEntities.Count,
+				set.TextEntities.Count,
+				set.UnknownEntities.Count));
+
+
+			AppendLog(ed, "[ViewIsland] Unknown Entities:");
+
+			for (int i = 0; i < set.UnknownEntities.Count; i++)
+			{
+				SheetEntity e = set.UnknownEntities[i];
+
+				AppendLog(ed, string.Format(
+					"  Unknown[{0}] Handle={1}, Kind={2}, EntityType={3}, Layer={4}, Bounds={5}",
+					i,
+					e.Handle,
+					e.Kind,
+					e.EntityType,
+					e.Layer,
+					e.Bounds));
+			}
+
+			AppendLog(ed, "[ViewIsland] Geometry Entities:");
+
+			for (int i = 0; i < set.GeometryEntities.Count; i++)
+			{
+				SheetEntity e = set.GeometryEntities[i];
+
+				AppendLog(ed, string.Format(
+					"  Geometry[{0}] Handle={1}, Kind={2}, EntityType={3}, Layer={4}, Bounds={5}",
+					i,
+					e.Handle,
+					e.Kind,
+					e.EntityType,
+					e.Layer,
+					e.Bounds));
+			}
+
+
+			ViewIslandBuildOptions options = new ViewIslandBuildOptions();
+
+			List<ViewIsland> islands = ViewIslandBuilder.Build(
+				set.GeometryEntities,
+				options);
+
+			AppendLog(ed, "[ViewIsland] IslandCount=" + islands.Count);
+
+			for (int i = 0; i < islands.Count; i++)
+			{
+				ViewIsland island = islands[i];
+
+				AppendLog(ed, string.Format(
+					"[Island {0}] Geom={1}, Bounds={2}, Width={3:0.###}, Height={4:0.###}, ThinRatio={5:0.###}, ThinCandidate={6}",
+					island.Index,
+					island.GeometryEntities.Count,
+					island.Bounds,
+					island.Width,
+					island.Height,
+					island.ThinnessRatio,
+					island.IsThinViewCandidate));
+			}
+
+			ViewIslandRoleClassifier.ClassifyAll(islands);
+
+			ViewIslandDebugDrawer.Draw(
+				db,
+				ed,
+				islands);
+
+			DrawClosedLoopsForIslands(db, ed, islands);
+		}
+
+		private static void DrawClosedLoopsForIslands(
+			Database db,
+			Editor ed,
+			List<ViewIsland> islands)
+		{
+			LoopExtractionOptions loopOptions = new LoopExtractionOptions();
+
+			ViewIslandClosedLoopBuilder builder =
+				new ViewIslandClosedLoopBuilder();
+
+			for (int i = 0; i < islands.Count; i++)
+			{
+				ViewIsland island = islands[i];
+
+				ClosedLoopExtractionResult result =
+					builder.Build(island, loopOptions);
+
+				AppendLog(ed, string.Format(
+					"[ClosedLoop Island {0}] Segments={1}, ClosedLoops={2}, OpenChains={3}, LargestArea={4:0.###}",
+					island.Index,
+					result.InputSegments.Count,
+					result.ClosedLoops.Count,
+					result.OpenChains.Count,
+					result.LargestLoopArea));
+
+				ClosedLoopDebugDrawer.Draw(db, ed, island, result);
+			}
+		}
+
+
+
 		[CommandMethod("FLUX_DEBUG_VIEW_ISLANDS")]
 		public void Run()
 		{
@@ -129,7 +278,7 @@ namespace FluxCad48.Commands
 
 		}
 
-		private static void CollectSheetEntities(
+		internal static void CollectSheetEntities(
 			Entity ent,
 			Transaction tr,
 			List<SheetEntity> results)

@@ -273,6 +273,8 @@ namespace FluxCad48.ShapeViewAnalysis
 					&& !IsTextLike
 					&& !IsDimensionLike
 					&& !IsBlockReference
+					&& !IsCenterLine
+					&& !IsHiddenLine
 					&&
 					(
 						HasLineGeometry
