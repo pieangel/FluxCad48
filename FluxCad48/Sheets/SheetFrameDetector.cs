@@ -592,5 +592,56 @@ namespace FluxCad48.Sheets
 
 			return result;
 		}
+
+		public static List<SheetFrameCandidate> DetectContainingFrames(
+	IReadOnlyList<Entity> searchEntities,
+	Bounds2D selectedBounds,
+	Editor ed = null)
+		{
+			List<SheetFrameCandidate> frames =
+				DetectCore(searchEntities, null, false, ed);
+
+			var result = new List<SheetFrameCandidate>();
+
+			foreach (SheetFrameCandidate frame in frames)
+			{
+				if (IsBoundsInsideFrame(selectedBounds, frame.Bounds))
+					result.Add(frame);
+			}
+
+			ed?.WriteMessage(
+				"\n[FrameDetect] ContainingFrames=" + result.Count);
+
+			return result
+				.OrderBy(f => f.Bounds.Area)
+				.ThenByDescending(f => f.Score)
+				.ToList();
+		}
+
+		private static bool IsBoundsInsideFrame(
+			Bounds2D inner,
+			Bounds2D frame)
+		{
+			if (inner == null || !inner.IsValid)
+				return false;
+
+			if (frame == null || !frame.IsValid)
+				return false;
+
+			double frameMinSize = Math.Min(frame.Width, frame.Height);
+			double tol = frameMinSize * 0.003;
+
+			if (tol < 1.0)
+				tol = 1.0;
+
+			if (tol > 8.0)
+				tol = 8.0;
+
+			return
+				inner.MinX >= frame.MinX - tol &&
+				inner.MaxX <= frame.MaxX + tol &&
+				inner.MinY >= frame.MinY - tol &&
+				inner.MaxY <= frame.MaxY + tol;
+		}
 	}
 }

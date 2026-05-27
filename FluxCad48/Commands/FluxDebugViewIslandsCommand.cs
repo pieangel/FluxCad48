@@ -13,6 +13,293 @@ namespace FluxCad48.Commands
 {
 	public class FluxDebugViewIslandsCommand
 	{
+		[CommandMethod("FLUX_COPY_VIEW_ISLAND_LOOP_ENTITIES_BELOW")]
+		public void CopyViewIslandLoopEntitiesBelow()
+		{
+			Document doc = Application.DocumentManager.MdiActiveDocument;
+			Editor ed = doc.Editor;
+			Database db = doc.Database;
+
+			PromptSelectionOptions pso = new PromptSelectionOptions();
+			pso.MessageForAdding =
+				"\nLoop 입력 Entity만 아래로 복사할 형상 뷰 영역을 선택하세요: ";
+
+			PromptSelectionResult psr = ed.GetSelection(pso);
+
+			if (psr.Status != PromptStatus.OK)
+			{
+				AppendLog(ed, "[LoopWorkspace] 선택이 취소되었습니다.");
+				return;
+			}
+
+			List<SheetEntity> entities = new List<SheetEntity>();
+
+			using (Transaction tr = db.TransactionManager.StartTransaction())
+			{
+				foreach (SelectedObject so in psr.Value)
+				{
+					if (so == null || so.ObjectId.IsNull)
+						continue;
+
+					Entity ent = tr.GetObject(so.ObjectId, OpenMode.ForRead) as Entity;
+					if (ent == null)
+						continue;
+
+					CollectSheetEntities(ent, tr, entities);
+				}
+
+				tr.Commit();
+			}
+
+			SelectedShapeViewSet set = SelectedShapeViewClassifier.Classify(entities);
+
+			ViewIslandBuildOptions options = new ViewIslandBuildOptions();
+
+			List<ViewIsland> islands = ViewIslandBuilder.Build(
+				set.GeometryEntities,
+				options);
+
+			ViewIslandRoleClassifier.ClassifyAll(islands);
+
+			CopyLoopEntitiesBelow(db, ed, islands);
+		}
+
+		private static void CopyLoopEntitiesBelow(
+	Database db,
+	Editor ed,
+	List<ViewIsland> islands)
+		{
+			if (islands == null || islands.Count == 0)
+			{
+				AppendLog(ed, "[LoopWorkspace] ViewIsland가 없습니다.");
+				return;
+			}
+
+			Bounds2D allBounds = GetIslandTotalBounds(islands);
+
+			if (allBounds == null || !allBounds.IsValid)
+			{
+				AppendLog(ed, "[LoopWorkspace] 전체 Bounds 계산 실패.");
+				return;
+			}
+
+			// 선택된 형상 영역 전체를 그대로 아래로 평행 이동한다.
+			double gapY = Math.Max(allBounds.Height * 0.35, 300.0);
+
+			double dx = 0.0;
+			double dy = -(allBounds.Height + gapY);
+
+			using (Transaction tr = db.TransactionManager.StartTransaction())
+			{
+				BlockTableRecord space =
+					tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite) as BlockTableRecord;
+
+				if (space == null)
+					return;
+
+				for (int i = 0; i < islands.Count; i++)
+				{
+					ViewIsland island = islands[i];
+
+					List<SheetEntity> loopEntities =
+						CollectLoopExtractableEntitiesForWorkspace(island);
+
+					if (loopEntities.Count == 0)
+						continue;
+
+					AddIslandLabel(
+						space,
+						tr,
+						island,
+						island.Bounds.MinX + dx,
+						island.Bounds.MaxY + dy + 30.0);
+
+					for (int j = 0; j < loopEntities.Count; j++)
+					{
+						Entity copied = CreateEntityFromSheetEntity(loopEntities[j], dx, dy);
+
+						if (copied == null)
+							continue;
+
+						copied.ColorIndex = 7;
+
+						space.AppendEntity(copied);
+						tr.AddNewlyCreatedDBObject(copied, true);
+					}
+
+					AppendLog(ed, string.Format(
+						"[LoopWorkspace] Island={0}, LoopEntities={1}, dx={2:0.###}, dy={3:0.###}, CopiedBelow=OK",
+						island.Index,
+						loopEntities.Count,
+						dx,
+						dy));
+				}
+
+				tr.Commit();
+			}
+		}
+
+		private static List<SheetEntity> CollectLoopExtractableEntitiesForWorkspace(
+	ViewIsland island)
+		{
+			List<SheetEntity> result = new List<SheetEntity>();
+
+			if (island == null || island.GeometryEntities == null)
+				return result;
+
+			for (int i = 0; i < island.GeometryEntities.Count; i++)
+			{
+				SheetEntity e = island.GeometryEntities[i];
+
+				if (e == null)
+					continue;
+
+				if (!e.IsLoopExtractableGeometry)
+					continue;
+
+				result.Add(e);
+			}
+
+			return result;
+		}
+
+		private static Bounds2D GetIslandTotalBounds(List<ViewIsland> islands)
+		{
+			Bounds2D result = null;
+
+			for (int i = 0; i < islands.Count; i++)
+			{
+				ViewIsland island = islands[i];
+
+				if (island == null || island.Bounds == null || !island.Bounds.IsValid)
+					continue;
+
+				if (result == null)
+				{
+					result = new Bounds2D(
+						island.Bounds.MinX,
+						island.Bounds.MinY,
+						island.Bounds.MaxX,
+						island.Bounds.MaxY);
+				}
+				else
+				{
+					result.ExpandToInclude(island.Bounds);
+				}
+			}
+
+			return result;
+		}
+
+		private static void AddIslandLabel(
+	BlockTableRecord space,
+	Transaction tr,
+	ViewIsland island,
+	double x,
+	double y)
+		{
+			DBText text = new DBText();
+
+			text.Position = new Point3d(x, y, 0.0);
+			text.Height = 25.0;
+			text.TextString = string.Format(
+				"ViewIsland {0}  LoopEntities={1}",
+				island.Index,
+				CountLoopExtractableEntities(island));
+			text.ColorIndex = 1;
+
+			space.AppendEntity(text);
+			tr.AddNewlyCreatedDBObject(text, true);
+		}
+
+		private static int CountLoopExtractableEntities(ViewIsland island)
+		{
+			if (island == null || island.GeometryEntities == null)
+				return 0;
+
+			int count = 0;
+
+			for (int i = 0; i < island.GeometryEntities.Count; i++)
+			{
+				SheetEntity e = island.GeometryEntities[i];
+
+				if (e != null && e.IsLoopExtractableGeometry)
+					count++;
+			}
+
+			return count;
+		}
+
+		private static Entity CreateEntityFromSheetEntity(
+	SheetEntity e,
+	double dx,
+	double dy)
+		{
+			if (e == null)
+				return null;
+
+			if (e.HasLineGeometry)
+			{
+				Line line = new Line(
+					ToPoint3d(e.StartPoint.Value, dx, dy),
+					ToPoint3d(e.EndPoint.Value, dx, dy));
+
+				return line;
+			}
+
+			if (e.HasPolylineGeometry)
+			{
+				Polyline pl = new Polyline();
+
+				for (int i = 0; i < e.Vertices.Count; i++)
+				{
+					Point2D p = e.Vertices[i];
+
+					pl.AddVertexAt(
+						i,
+						new Point2d(p.X + dx, p.Y + dy),
+						0.0,
+						0.0,
+						0.0);
+				}
+
+				pl.Closed = e.IsClosed;
+				return pl;
+			}
+
+			if (e.HasCircleGeometry)
+			{
+				Circle c = new Circle(
+					ToPoint3d(e.CenterPoint.Value, dx, dy),
+					Vector3d.ZAxis,
+					e.Radius.Value);
+
+				return c;
+			}
+
+			if (e.HasArcGeometry)
+			{
+				Arc arc = new Arc(
+					ToPoint3d(e.CenterPoint.Value, dx, dy),
+					e.Radius.Value,
+					e.StartAngleDeg2D.Value * Math.PI / 180.0,
+					e.EndAngleDeg2D.Value * Math.PI / 180.0);
+
+				return arc;
+			}
+
+			return null;
+		}
+
+		private static Point3d ToPoint3d(
+			Point2D p,
+			double dx,
+			double dy)
+		{
+			return new Point3d(p.X + dx, p.Y + dy, 0.0);
+		}
+
+
 		[CommandMethod("FLUX_DEBUG_VIEW_ISLAND_CLOSED_LOOP")]
 		public void RunClosedLoop()
 		{
