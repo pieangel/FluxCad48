@@ -793,7 +793,7 @@ namespace FluxCad48.Commands
 				List<SheetFrameCandidate> frames =
 					SheetFrameDetector.Detect(selectedEntities, ed);
 
-				
+
 
 				Bounds2D selectionBounds = new Bounds2D(
 					System.Math.Min(ppr1.Value.X, ppr2.Value.X),
@@ -1055,6 +1055,305 @@ namespace FluxCad48.Commands
 			}
 		}
 
+
+
+		[CommandMethod("FLUX_COPY_DETECTED_SHEETS_TO_RIGHT_V2")]
+		public void FluxCopyDetectedSheetsToRightV2()
+		{
+			Document doc = Application.DocumentManager.MdiActiveDocument;
+			Database db = doc.Database;
+			Editor ed = doc.Editor;
+
+			PromptPointOptions ppo1 = new PromptPointOptions(
+				"\n[V2] 복사할 쉬트 영역의 첫 번째 구석점을 지정하세요: ");
+
+			PromptPointResult ppr1 = ed.GetPoint(ppo1);
+
+			if (ppr1.Status != PromptStatus.OK)
+			{
+				ed.WriteMessage("\n[V2] 첫 번째 점 선택이 취소되었습니다.");
+				return;
+			}
+
+			PromptCornerOptions pco = new PromptCornerOptions(
+				"\n[V2] 반대 구석점을 지정하세요: ",
+				ppr1.Value);
+
+			PromptPointResult ppr2 = ed.GetCorner(pco);
+
+			if (ppr2.Status != PromptStatus.OK)
+			{
+				ed.WriteMessage("\n[V2] 반대 구석점 선택이 취소되었습니다.");
+				return;
+			}
+
+			PromptSelectionResult psr =
+				ed.SelectCrossingWindow(
+					ppr1.Value,
+					ppr2.Value);
+
+			if (psr.Status != PromptStatus.OK)
+			{
+				ed.WriteMessage("\n[V2] 선택된 객체가 없습니다.");
+				return;
+			}
+
+			ObjectId[] selectedIds = psr.Value.GetObjectIds();
+
+			ed.SetImpliedSelection(selectedIds);
+
+			ed.WriteMessage(
+				"\n[V2] 드래그 범위로 선택된 객체를 화면에 표시했습니다.");
+
+			PromptKeywordOptions confirmOptions =
+				new PromptKeywordOptions(
+					"\n[V2] 선택 상태를 확인하세요. 계속 진행하시겠습니까? [Yes/No] <Yes>: ");
+
+			confirmOptions.Keywords.Add("Yes");
+			confirmOptions.Keywords.Add("No");
+			confirmOptions.Keywords.Default = "Yes";
+			confirmOptions.AllowNone = true;
+
+			PromptResult confirmResult =
+				ed.GetKeywords(confirmOptions);
+
+			if (confirmResult.Status != PromptStatus.OK)
+			{
+				ed.SetImpliedSelection(new ObjectId[0]);
+				ed.WriteMessage("\n[V2] 선택 확인이 취소되었습니다.");
+				return;
+			}
+
+			if (string.Equals(
+				confirmResult.StringResult,
+				"No",
+				StringComparison.OrdinalIgnoreCase))
+			{
+				ed.SetImpliedSelection(new ObjectId[0]);
+				ed.WriteMessage("\n[V2] 사용자가 선택 결과를 취소했습니다.");
+				return;
+			}
+
+			using (Transaction tr = db.TransactionManager.StartTransaction())
+			{
+				var selectedEntities = new List<Entity>();
+
+				foreach (ObjectId id in selectedIds)
+				{
+					Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+
+					if (ent == null)
+						continue;
+
+					selectedEntities.Add(ent);
+				}
+
+				ed.WriteMessage(
+					"\n[V2] SelectedEntities=" +
+					selectedEntities.Count);
+
+				List<SheetFrameCandidate> frames =
+					SheetFrameDetector.Detect(selectedEntities, ed);
+
+				Bounds2D selectionBounds = new Bounds2D(
+					System.Math.Min(ppr1.Value.X, ppr2.Value.X),
+					System.Math.Min(ppr1.Value.Y, ppr2.Value.Y),
+					System.Math.Max(ppr1.Value.X, ppr2.Value.X),
+					System.Math.Max(ppr1.Value.Y, ppr2.Value.Y));
+
+				frames = frames
+					.Where(f => IsFrameFullyInsideSelection(f.Bounds, selectionBounds))
+					.ToList();
+
+				ed.WriteMessage(
+					"\n[V2] DetectedFrames=" +
+					frames.Count);
+
+				if (frames.Count == 0)
+				{
+					ed.WriteMessage(
+						"\n[V2] 탐지된 쉬트 프레임이 없습니다.");
+					return;
+				}
+
+				int nextSheetIndex = GetNextSheetIndexFromDrawing(tr, db, ed);
+
+				List<SheetRegion> sheets =
+					BuildSheetRegionsFromDetectedFramesForPureCopyV2(
+						tr,
+						db,
+						frames,
+						selectedIds,
+						nextSheetIndex,
+						ed);
+
+				ed.WriteMessage(
+					"\n[V2] BuiltSheets=" +
+					sheets.Count);
+
+				if (sheets.Count == 0)
+				{
+					ed.WriteMessage(
+						"\n[V2] 복사할 쉬트 내부 객체가 없습니다.");
+					return;
+				}
+
+				Bounds2D drawingBounds =
+					GetOriginalDrawingBounds(tr, db);
+
+				if (drawingBounds == null || !drawingBounds.IsValid)
+				{
+					ed.WriteMessage("\n[V2] 원본 도면 Bounds를 계산하지 못했습니다.");
+					return;
+				}
+
+				SheetArrangeOptions options = new SheetArrangeOptions();
+
+				Bounds2D existingCopiedBounds =
+					GetExistingCopiedSheetBounds(tr, db);
+
+				List<SheetPlacement> placements =
+					CreateWorkspacePlacements(
+						sheets,
+						drawingBounds,
+						existingCopiedBounds,
+						options,
+						ed);
+
+				BlockTable bt =
+					(BlockTable)tr.GetObject(
+						db.BlockTableId,
+						OpenMode.ForRead);
+
+				BlockTableRecord modelSpace =
+					(BlockTableRecord)tr.GetObject(
+						bt[BlockTableRecord.ModelSpace],
+						OpenMode.ForWrite);
+
+				BricscadEntityTools.EnsureLayer(tr, db, CopiedLayerName);
+				BricscadEntityTools.EnsureLayer(tr, db, MarkerLayerName);
+
+				int totalCloned = 0;
+
+				foreach (SheetPlacement placement in placements)
+				{
+					string sheetCode = GetSheetCode(placement.SourceSheet);
+
+					ObjectIdCollection idsToClone = new ObjectIdCollection();
+
+					foreach (ObjectId id in placement.SourceSheet.EntityIds)
+						idsToClone.Add(id);
+
+					IdMapping mapping = new IdMapping();
+
+					db.DeepCloneObjects(
+						idsToClone,
+						modelSpace.ObjectId,
+						mapping,
+						false);
+
+					Vector3d displacement =
+						new Vector3d(
+							placement.MoveX,
+							placement.MoveY,
+							0);
+
+					int clonedCount = 0;
+
+					foreach (IdPair pair in mapping)
+					{
+						if (!pair.IsCloned)
+							continue;
+
+						Entity clonedEntity =
+							tr.GetObject(pair.Value, OpenMode.ForWrite) as Entity;
+
+						if (clonedEntity == null)
+							continue;
+
+						clonedEntity.TransformBy(
+							Matrix3d.Displacement(displacement));
+
+						SetSheetCodeXData(tr, db, clonedEntity, sheetCode);
+						clonedCount++;
+					}
+
+					totalCloned += clonedCount;
+
+					Bounds2D copiedFrameBounds = new Bounds2D(
+						placement.SourceBounds.MinX + placement.MoveX,
+						placement.SourceBounds.MinY + placement.MoveY,
+						placement.SourceBounds.MaxX + placement.MoveX,
+						placement.SourceBounds.MaxY + placement.MoveY);
+
+					Polyline copiedFrame =
+						BricscadEntityTools.CreateRectanglePolyline(copiedFrameBounds);
+
+					copiedFrame.Layer = CopiedLayerName;
+					copiedFrame.Color = Color.FromColorIndex(ColorMethod.ByAci, 3);
+					copiedFrame.LineWeight = LineWeight.LineWeight050;
+
+					modelSpace.AppendEntity(copiedFrame);
+					tr.AddNewlyCreatedDBObject(copiedFrame, true);
+					SetSheetCodeXData(tr, db, copiedFrame, sheetCode);
+
+					Polyline sourceMarker =
+						BricscadEntityTools.CreateRectanglePolyline(
+							placement.SourceBounds);
+
+					sourceMarker.Color = Color.FromColorIndex(ColorMethod.ByAci, 2);
+					sourceMarker.LineWeight = LineWeight.LineWeight050;
+					sourceMarker.Layer = MarkerLayerName;
+
+					modelSpace.AppendEntity(sourceMarker);
+					tr.AddNewlyCreatedDBObject(sourceMarker, true);
+
+					DBText sourceLabel =
+						CreateSheetCodeText(
+							placement.SourceBounds,
+							0,
+							0,
+							sheetCode,
+							MarkerLayerName,
+							2);
+
+					modelSpace.AppendEntity(sourceLabel);
+					tr.AddNewlyCreatedDBObject(sourceLabel, true);
+					SetSheetCodeXData(tr, db, sourceLabel, sheetCode);
+
+					DBText copiedLabel =
+						CreateSheetCodeText(
+							placement.SourceBounds,
+							placement.MoveX,
+							placement.MoveY,
+							sheetCode,
+							CopiedLayerName,
+							3);
+
+					modelSpace.AppendEntity(copiedLabel);
+					tr.AddNewlyCreatedDBObject(copiedLabel, true);
+					SetSheetCodeXData(tr, db, copiedLabel, sheetCode);
+
+					ed.WriteMessage(
+						"\n[V2] Sheet=" +
+						placement.SourceSheet.Index +
+						", Code=" + sheetCode +
+						", SourceEntities=" +
+						placement.SourceSheet.EntityIds.Count +
+						", Cloned=" +
+						clonedCount +
+						", Bounds=" +
+						placement.SourceBounds);
+				}
+
+				tr.Commit();
+
+				ed.WriteMessage(
+					"\nFLUX_COPY_DETECTED_SHEETS_TO_RIGHT_V2 완료: " +
+					"DetectedSheets=" + sheets.Count +
+					", TotalCloned=" + totalCloned);
+			}
+		}
 
 		private static Bounds2D GetOriginalDrawingBounds(
 	Transaction tr,
@@ -1617,6 +1916,200 @@ namespace FluxCad48.Commands
 			return result;
 		}
 
+
+
+		private static List<SheetRegion> BuildSheetRegionsFromDetectedFramesForPureCopyV2(
+			Transaction tr,
+			Database db,
+			List<SheetFrameCandidate> frames,
+			ObjectId[] selectedIds,
+			int startIndex,
+			Editor ed)
+		{
+			frames = SortFramesTopToBottomLeftToRight(frames);
+
+			var allSheets = new List<SheetRegion>();
+
+			for (int i = 0; i < frames.Count; i++)
+			{
+				SheetRegion sheet = new SheetRegion();
+				sheet.Bounds = frames[i].Bounds;
+				sheet.Index = startIndex + i;
+				allSheets.Add(sheet);
+			}
+
+			Bounds2D unownedBounds = null;
+			int unownedCount = 0;
+			int assignedCount = 0;
+
+			foreach (ObjectId id in selectedIds)
+			{
+				Entity ent =
+					tr.GetObject(id, OpenMode.ForRead) as Entity;
+
+				if (ent == null)
+					continue;
+
+				if (IsCopyCommandGeneratedMarker(ent))
+				{
+					ed.WriteMessage(
+						"\n[V2 SkipFluxGenerated] Handle=" +
+						ent.Handle +
+						", Type=" +
+						ent.GetType().Name +
+						", Layer=" +
+						ent.Layer);
+
+					continue;
+				}
+
+				int ownerIndex = -1;
+				Bounds2D entityBounds = null;
+
+				Line line = ent as Line;
+
+				if (line != null)
+				{
+					ownerIndex =
+						FindBestOwningSheetIndexForLine(
+							frames,
+							line);
+				}
+
+				if (ownerIndex < 0)
+				{
+					entityBounds = GetEntityWorldBoundsRecursive(
+						tr,
+						ent,
+						Matrix3d.Identity,
+						0);
+
+					if (IsUsableBoundsForOwnership(entityBounds))
+					{
+						ownerIndex =
+							FindBestOwningSheetIndex(
+								frames,
+								entityBounds);
+					}
+				}
+
+				if (ownerIndex < 0 && IsUsableBoundsForOwnership(entityBounds))
+				{
+					ownerIndex =
+						FindBestOwningSheetIndexForBoundsEvenIfFlat(
+							frames,
+							entityBounds);
+				}
+
+				if (ownerIndex < 0)
+				{
+					BlockReference br = ent as BlockReference;
+
+					if (br != null)
+					{
+						ownerIndex =
+							FindBestOwningSheetIndexForPoint(
+								frames,
+								br.Position);
+					}
+				}
+
+				if (ownerIndex < 0)
+				{
+					DebugOwnershipFailure(
+						frames,
+						ent,
+						entityBounds,
+						ed);
+
+					if (entityBounds != null && entityBounds.IsValid)
+					{
+						unownedBounds = UnionBounds(unownedBounds, entityBounds);
+						unownedCount++;
+					}
+
+					ed.WriteMessage(
+						"\n[V2 SkipUnownedEntity] Handle=" +
+						ent.Handle +
+						", Type=" +
+						ent.GetType().Name +
+						", Layer=" +
+						ent.Layer +
+						", Bounds=" +
+						entityBounds);
+
+					continue;
+				}
+
+				if (ownerIndex >= allSheets.Count)
+				{
+					ed.WriteMessage(
+						"\n[V2 OwnerIndexError] OwnerIndex=" +
+						ownerIndex +
+						", SheetCount=" +
+						allSheets.Count +
+						", EntityHandle=" +
+						ent.Handle +
+						", Type=" +
+						ent.GetType().Name);
+
+					continue;
+				}
+
+				// V2 핵심 정책:
+				// 소속만 판정하고, BlockReference/Bounds 안전성 검증으로 탈락시키지 않는다.
+				// 즉, Bounds 없음 / 비정상 Extents / 큰 BlockReference 문제는 복사 단계에서 판단하지 않는다.
+				if (!allSheets[ownerIndex].EntityIds.Contains(id))
+				{
+					allSheets[ownerIndex].EntityIds.Add(id);
+					assignedCount++;
+				}
+			}
+
+			ed.WriteMessage(
+				"\n[V2 OwnershipSummary] Assigned=" +
+				assignedCount +
+				", Unowned=" +
+				unownedCount +
+				", UnownedBounds=" +
+				unownedBounds);
+
+			var result = new List<SheetRegion>();
+
+			for (int i = 0; i < allSheets.Count; i++)
+			{
+				SheetRegion sheet = allSheets[i];
+				SheetFrameCandidate frame = frames[i];
+
+				if (sheet.EntityIds.Count == 0)
+				{
+					ed.WriteMessage(
+						"\n[V2] SkipEmptySheet FrameHandle=" +
+						frame.Handle +
+						", Bounds=" +
+						sheet.Bounds);
+
+					continue;
+				}
+
+				sheet.Index = startIndex + result.Count;
+				result.Add(sheet);
+
+				ed.WriteMessage(
+					"\n[V2] BuildSheet Code=" +
+					GetSheetCode(sheet) +
+					", Index=" +
+					sheet.Index +
+					", FrameHandle=" +
+					frame.Handle +
+					", EntityCount=" +
+					sheet.EntityIds.Count +
+					", Bounds=" +
+					sheet.Bounds);
+			}
+
+			return result;
+		}
 
 		private static bool IsEntitySafeToCloneAsWhole(
 			Transaction tr,
