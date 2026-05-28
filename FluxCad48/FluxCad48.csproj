@@ -127,6 +127,7 @@
     <Compile Include="ShapeViewAnalysis\Loops\SegmentEndpointInfo.cs" />
     <Compile Include="ShapeViewAnalysis\Loops\SegmentExtractor.cs" />
     <Compile Include="ShapeViewAnalysis\Loops\ViewIslandClosedLoopBuilder.cs" />
+    <Compile Include="ShapeViewAnalysis\Loops\Workspace\LoopWorkspacePlacement.cs" />
     <Compile Include="ShapeViewAnalysis\SelectedShapeViewAnalysisResult.cs" />
     <Compile Include="ShapeViewAnalysis\SelectedShapeViewClassifier.cs" />
     <Compile Include="ShapeViewAnalysis\SelectedShapeViewSet.cs" />

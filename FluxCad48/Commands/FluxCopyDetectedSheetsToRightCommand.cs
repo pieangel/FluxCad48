@@ -26,6 +26,288 @@ namespace FluxCad48.Commands
 			ed.WriteMessage("\n" + message);
 		}
 
+		[CommandMethod("FLUX_DEBUG_BLOCK_VISUAL_BOUNDS")]
+		public void FluxDebugBlockVisualBounds()
+		{
+			Document doc = Application.DocumentManager.MdiActiveDocument;
+			Database db = doc.Database;
+			Editor ed = doc.Editor;
+
+			PromptSelectionOptions pso = new PromptSelectionOptions();
+			pso.MessageForAdding =
+				"\nVisual Bounds를 확인할 BlockReference를 선택하세요: ";
+
+			PromptSelectionResult psr = ed.GetSelection(pso);
+
+			if (psr.Status != PromptStatus.OK)
+			{
+				ed.WriteMessage("\n선택이 취소되었습니다.");
+				return;
+			}
+
+			using (Transaction tr = db.TransactionManager.StartTransaction())
+			{
+				BlockTable bt =
+					(BlockTable)tr.GetObject(
+						db.BlockTableId,
+						OpenMode.ForRead);
+
+				BlockTableRecord modelSpace =
+					(BlockTableRecord)tr.GetObject(
+						bt[BlockTableRecord.ModelSpace],
+						OpenMode.ForWrite);
+
+				BricscadEntityTools.EnsureLayer(tr, db, MarkerLayerName);
+
+				int count = 0;
+
+				foreach (ObjectId id in psr.Value.GetObjectIds())
+				{
+					Entity ent =
+						tr.GetObject(id, OpenMode.ForRead) as Entity;
+
+					BlockReference br = ent as BlockReference;
+
+					if (br == null)
+						continue;
+
+					Bounds2D geometricBounds =
+						GetBlockReferenceGeometricExtentsBounds(br);
+
+					Bounds2D visualBounds =
+						GetBlockReferenceVisualGeometryBounds(
+							tr,
+							br,
+							br.BlockTransform,
+							0,
+							ed);
+
+					ed.WriteMessage(
+						"\n[BlockVisualBounds] Handle=" + br.Handle +
+						", BlockName=" + GetBlockName(tr, br) +
+						", GeometricBounds=" + geometricBounds +
+						", VisualBounds=" + visualBounds);
+
+					if (geometricBounds != null && geometricBounds.IsValid)
+					{
+						Polyline red =
+							BricscadEntityTools.CreateRectanglePolyline(
+								geometricBounds);
+
+						red.Layer = MarkerLayerName;
+						red.Color = Color.FromColorIndex(ColorMethod.ByAci, 1);
+						red.LineWeight = LineWeight.LineWeight050;
+
+						modelSpace.AppendEntity(red);
+						tr.AddNewlyCreatedDBObject(red, true);
+					}
+
+					if (visualBounds != null && visualBounds.IsValid)
+					{
+						Polyline green =
+							BricscadEntityTools.CreateRectanglePolyline(
+								visualBounds);
+
+						green.Layer = MarkerLayerName;
+						green.Color = Color.FromColorIndex(ColorMethod.ByAci, 3);
+						green.LineWeight = LineWeight.LineWeight070;
+
+						modelSpace.AppendEntity(green);
+						tr.AddNewlyCreatedDBObject(green, true);
+
+						DBText label =
+							CreateDebugLabel(
+								visualBounds.MinX,
+								visualBounds.MaxY,
+								"VISUAL " + br.Handle,
+								MarkerLayerName);
+
+						label.Color = Color.FromColorIndex(ColorMethod.ByAci, 3);
+
+						modelSpace.AppendEntity(label);
+						tr.AddNewlyCreatedDBObject(label, true);
+					}
+
+					count++;
+				}
+
+				tr.Commit();
+
+				ed.WriteMessage(
+					"\nFLUX_DEBUG_BLOCK_VISUAL_BOUNDS 완료. BlockReference Count=" +
+					count);
+			}
+		}
+
+		private static Bounds2D GetBlockReferenceVisualGeometryBounds(
+	Transaction tr,
+	BlockReference br,
+	Matrix3d transform,
+	int depth,
+	Editor ed)
+		{
+			if (tr == null || br == null)
+				return null;
+
+			if (depth > 20)
+				return null;
+
+			BlockTableRecord btr =
+				tr.GetObject(
+					br.BlockTableRecord,
+					OpenMode.ForRead) as BlockTableRecord;
+
+			if (btr == null)
+				return null;
+
+			Bounds2D result = null;
+
+			foreach (ObjectId childId in btr)
+			{
+				Entity child =
+					tr.GetObject(childId, OpenMode.ForRead) as Entity;
+
+				if (child == null)
+					continue;
+
+				BlockReference childBr = child as BlockReference;
+
+				if (childBr != null)
+				{
+					Matrix3d childTransform =
+						transform * childBr.BlockTransform;
+
+					Bounds2D childBlockBounds =
+						GetBlockReferenceVisualGeometryBounds(
+							tr,
+							childBr,
+							childTransform,
+							depth + 1,
+							ed);
+
+					result = UnionBounds(result, childBlockBounds);
+					continue;
+				}
+
+				if (!IsVisualGeometryEntityForBounds(child))
+					continue;
+
+				Bounds2D childBounds =
+					GetPrimitiveEntityTransformedBounds(
+						child,
+						transform);
+
+				if (childBounds == null || !childBounds.IsValid)
+					continue;
+
+				if (!IsReasonableChildBoundsForBlockVisual(br, childBounds))
+				{
+					ed?.WriteMessage(
+						"\n[SkipAbnormalVisualChild] Parent=" +
+						br.Handle +
+						", Child=" +
+						child.Handle +
+						", Type=" +
+						child.GetType().Name +
+						", Bounds=" +
+						childBounds);
+
+					continue;
+				}
+
+				result = UnionBounds(result, childBounds);
+			}
+
+			return result;
+		}
+
+		private static bool IsVisualGeometryEntityForBounds(Entity ent)
+		{
+			if (ent == null)
+				return false;
+
+			if (ent is Line)
+				return true;
+
+			if (ent is Polyline)
+				return true;
+
+			if (ent is Polyline2d)
+				return true;
+
+			if (ent is Polyline3d)
+				return true;
+
+			if (ent is Circle)
+				return true;
+
+			if (ent is Arc)
+				return true;
+
+			if (ent is Ellipse)
+				return true;
+
+			return false;
+		}
+
+		private static bool IsReasonableChildBoundsForBlockVisual(
+	BlockReference owner,
+	Bounds2D childBounds)
+		{
+			if (owner == null || childBounds == null || !childBounds.IsValid)
+				return false;
+
+			Bounds2D ownerBounds = GetBlockReferenceGeometricExtentsBounds(owner);
+
+			if (ownerBounds == null || !ownerBounds.IsValid)
+				return true;
+
+			double margin =
+				Math.Max(ownerBounds.Width, ownerBounds.Height) * 3.0;
+
+			if (margin < 1000.0)
+				margin = 1000.0;
+
+			if (childBounds.MaxX < ownerBounds.MinX - margin)
+				return false;
+
+			if (childBounds.MinX > ownerBounds.MaxX + margin)
+				return false;
+
+			if (childBounds.MaxY < ownerBounds.MinY - margin)
+				return false;
+
+			if (childBounds.MinY > ownerBounds.MaxY + margin)
+				return false;
+
+			return true;
+		}
+
+
+
+		private static Bounds2D GetBlockReferenceGeometricExtentsBounds(
+	BlockReference br)
+		{
+			if (br == null)
+				return null;
+
+			try
+			{
+				Extents3d ext = br.GeometricExtents;
+
+				return new Bounds2D(
+					ext.MinPoint.X,
+					ext.MinPoint.Y,
+					ext.MaxPoint.X,
+					ext.MaxPoint.Y);
+			}
+			catch
+			{
+				return null;
+			}
+		}
+
+
 		[CommandMethod("FLUX_DEBUG_MARK_ENTITY_BY_HANDLE")]
 		public void FluxDebugMarkEntityByHandle()
 		{
@@ -457,6 +739,40 @@ namespace FluxCad48.Commands
 
 			ObjectId[] selectedIds = psr.Value.GetObjectIds();
 
+			ed.SetImpliedSelection(selectedIds);
+
+			ed.WriteMessage(
+				"\n[DetectedSheetCopy] 드래그 범위로 선택된 객체를 화면에 표시했습니다.");
+
+			PromptKeywordOptions confirmOptions =
+				new PromptKeywordOptions(
+					"\n선택 상태를 확인하세요. 계속 진행하시겠습니까? [Yes/No] <Yes>: ");
+
+			confirmOptions.Keywords.Add("Yes");
+			confirmOptions.Keywords.Add("No");
+			confirmOptions.Keywords.Default = "Yes";
+			confirmOptions.AllowNone = true;
+
+			PromptResult confirmResult =
+				ed.GetKeywords(confirmOptions);
+
+			if (confirmResult.Status != PromptStatus.OK)
+			{
+				ed.SetImpliedSelection(new ObjectId[0]);
+				ed.WriteMessage("\n[DetectedSheetCopy] 선택 확인이 취소되었습니다.");
+				return;
+			}
+
+			if (string.Equals(
+				confirmResult.StringResult,
+				"No",
+				StringComparison.OrdinalIgnoreCase))
+			{
+				ed.SetImpliedSelection(new ObjectId[0]);
+				ed.WriteMessage("\n[DetectedSheetCopy] 사용자가 선택 결과를 취소했습니다.");
+				return;
+			}
+
 			using (Transaction tr = db.TransactionManager.StartTransaction())
 			{
 				var selectedEntities = new List<Entity>();
@@ -476,6 +792,8 @@ namespace FluxCad48.Commands
 
 				List<SheetFrameCandidate> frames =
 					SheetFrameDetector.Detect(selectedEntities, ed);
+
+				
 
 				Bounds2D selectionBounds = new Bounds2D(
 					System.Math.Min(ppr1.Value.X, ppr2.Value.X),
@@ -500,6 +818,15 @@ namespace FluxCad48.Commands
 				}
 
 				int nextSheetIndex = GetNextSheetIndexFromDrawing(tr, db, ed);
+
+				// 좌표 검증용: 알고리즘이 사용하는 Bounds를 CAD 화면에 직접 표시
+				/*
+				SheetFrameDetector.DebugDrawBoundsForCoordinateCheck(
+					tr,
+					db,
+					ed,
+					selectedEntities);
+				*/
 
 				List<SheetRegion> sheets =
 					BuildSheetRegionsFromDetectedFrames(
@@ -649,6 +976,24 @@ namespace FluxCad48.Commands
 					}
 
 					totalCloned += clonedCount;
+
+					Bounds2D newCopiedFrameBounds = new Bounds2D(
+						placement.SourceBounds.MinX + placement.MoveX,
+						placement.SourceBounds.MinY + placement.MoveY,
+						placement.SourceBounds.MaxX + placement.MoveX,
+						placement.SourceBounds.MaxY + placement.MoveY);
+
+					Polyline copiedFrame =
+						BricscadEntityTools.CreateRectanglePolyline(newCopiedFrameBounds);
+
+					copiedFrame.Layer = CopiedLayerName;
+					copiedFrame.Color = Color.FromColorIndex(ColorMethod.ByAci, 3);
+					copiedFrame.LineWeight = LineWeight.LineWeight050;
+
+					modelSpace.AppendEntity(copiedFrame);
+					tr.AddNewlyCreatedDBObject(copiedFrame, true);
+					SetSheetCodeXData(tr, db, copiedFrame, sheetCode);
+
 
 					Polyline marker =
 						BricscadEntityTools.CreateRectanglePolyline(
@@ -1088,6 +1433,9 @@ namespace FluxCad48.Commands
 					bt[BlockTableRecord.ModelSpace],
 					OpenMode.ForRead);
 
+			Bounds2D unownedBounds = null;
+			int unownedCount = 0;
+
 			foreach (ObjectId id in selectedIds)
 			{
 				Entity ent =
@@ -1124,7 +1472,11 @@ namespace FluxCad48.Commands
 
 				if (ownerIndex < 0)
 				{
-					entityBounds = GetEntityWorldBounds(tr, ent);
+					entityBounds = GetEntityWorldBoundsRecursive(
+						tr,
+						ent,
+						Matrix3d.Identity,
+						0);
 
 					if (IsUsableBoundsForOwnership(entityBounds))
 					{
@@ -1158,6 +1510,19 @@ namespace FluxCad48.Commands
 
 				if (ownerIndex < 0)
 				{
+					DebugOwnershipFailure(
+						frames,
+						ent,
+						entityBounds,
+						ed);
+
+					if (entityBounds != null && entityBounds.IsValid)
+					{
+						unownedBounds = UnionBounds(unownedBounds, entityBounds);
+						unownedCount++;
+					}
+
+
 					ed.WriteMessage(
 						"\n[SkipUnownedEntity] Handle=" +
 						ent.Handle +
@@ -1186,8 +1551,33 @@ namespace FluxCad48.Commands
 					continue;
 				}
 
-				allSheets[ownerIndex].EntityIds.Add(id);
+				Bounds2D ownerFrameBounds = frames[ownerIndex].Bounds;
+
+				bool isFrameOwnerOfThisSheet =
+					frames[ownerIndex].ObjectId == id;
+
+				if (!isFrameOwnerOfThisSheet &&
+					!IsEntitySafeToCloneAsWhole(tr, ent, ownerFrameBounds, ed))
+				{
+					ed.WriteMessage(
+						"\n[SkipUnsafeWholeBlockClone] Handle=" +
+						ent.Handle +
+						", Type=" + ent.GetType().Name +
+						", Bounds=" + entityBounds +
+						", OwnerFrame=" + ownerFrameBounds);
+
+					continue;
+				}
+
+				if (!allSheets[ownerIndex].EntityIds.Contains(id))
+					allSheets[ownerIndex].EntityIds.Add(id);
 			}
+
+			ed.WriteMessage(
+				"\n[UnownedSummary] Count=" +
+				unownedCount +
+				", Bounds=" +
+				unownedBounds);
 
 			var result = new List<SheetRegion>();
 
@@ -1226,6 +1616,311 @@ namespace FluxCad48.Commands
 
 			return result;
 		}
+
+
+		private static bool IsEntitySafeToCloneAsWhole(
+			Transaction tr,
+			Entity ent,
+			Bounds2D frameBounds,
+			Editor ed)
+		{
+			if (ent == null)
+				return false;
+
+			if (frameBounds == null || !frameBounds.IsValid)
+				return false;
+
+			Line line = ent as Line;
+
+			if (line != null)
+				return IsLineInsideSheetFrameForCopy(frameBounds, line);
+
+			DBText dbText = ent as DBText;
+
+			if (dbText != null)
+			{
+				Bounds2D textBounds = GetEntityWorldBounds(tr, ent);
+
+				if (textBounds == null || !textBounds.IsValid)
+					return IsPointInsideBounds(frameBounds, dbText.Position, 5.0);
+
+				return IsEntityInsideSheetFrameForCopy(frameBounds, textBounds);
+			}
+
+			MText mText = ent as MText;
+
+			if (mText != null)
+			{
+				Bounds2D textBounds = GetEntityWorldBounds(tr, ent);
+
+				if (textBounds == null || !textBounds.IsValid)
+					return IsPointInsideBounds(frameBounds, mText.Location, 5.0);
+
+				return IsEntityInsideSheetFrameForCopy(frameBounds, textBounds);
+			}
+
+			BlockReference br = ent as BlockReference;
+
+			if (br != null)
+				return IsSafeSmallBlockReferenceForCopy(tr, br, frameBounds, ed);
+
+			Bounds2D b = GetEntityWorldBounds(tr, ent);
+
+			if (b == null || !b.IsValid)
+				return false;
+
+			return IsEntityInsideSheetFrameForCopy(frameBounds, b);
+		}
+
+
+
+		private static bool IsSafeSmallBlockReferenceForCopy(
+	Transaction tr,
+	BlockReference br,
+	Bounds2D frameBounds,
+	Editor ed)
+		{
+			Bounds2D b = GetEntityWorldBounds(tr, br);
+
+			if (b == null || !b.IsValid)
+				return false;
+
+			if (!IsEntityInsideSheetFrameForCopy(frameBounds, b))
+				return false;
+
+			double frameArea = frameBounds.Area;
+			double blockArea = b.Area;
+
+			if (frameArea <= 0.0)
+				return false;
+
+			double areaRatio = blockArea / frameArea;
+
+			// 표 안의 작은 심볼/텍스트 블록은 허용
+			if (areaRatio <= 0.20)
+				return true;
+
+			ed?.WriteMessage(
+				"\n[UnsafeBlockReferenceWholeClone] Handle=" +
+				br.Handle +
+				", Bounds=" + b +
+				", Frame=" + frameBounds);
+
+			return false;
+		}
+
+		private static Bounds2D GetEntityWorldBoundsRecursive(
+	Transaction tr,
+	Entity ent,
+	Matrix3d parentTransform,
+	int depth)
+		{
+			if (ent == null)
+				return null;
+
+			if (depth > 20)
+				return null;
+
+			BlockReference br = ent as BlockReference;
+
+			if (br != null)
+			{
+				Matrix3d nextTransform = br.BlockTransform * parentTransform;
+
+				BlockTableRecord btr =
+					tr.GetObject(
+						br.BlockTableRecord,
+						OpenMode.ForRead) as BlockTableRecord;
+
+				if (btr == null)
+					return null;
+
+				Bounds2D result = null;
+
+				foreach (ObjectId childId in btr)
+				{
+					Entity child =
+						tr.GetObject(childId, OpenMode.ForRead) as Entity;
+
+					if (child == null)
+						continue;
+
+					if (ShouldIgnoreForOwnershipBounds(child))
+						continue;
+
+					Bounds2D childBounds =
+						GetEntityWorldBoundsRecursive(
+							tr,
+							child,
+							nextTransform,
+							depth + 1);
+
+					result = UnionBounds(result, childBounds);
+				}
+
+				return result;
+			}
+
+			return GetPrimitiveEntityTransformedBounds(ent, parentTransform);
+		}
+
+		private static Bounds2D GetPrimitiveEntityTransformedBounds(
+	Entity ent,
+	Matrix3d transform)
+		{
+			try
+			{
+				Extents3d ext = ent.GeometricExtents;
+
+				Point3d p1 = new Point3d(ext.MinPoint.X, ext.MinPoint.Y, 0).TransformBy(transform);
+				Point3d p2 = new Point3d(ext.MaxPoint.X, ext.MinPoint.Y, 0).TransformBy(transform);
+				Point3d p3 = new Point3d(ext.MaxPoint.X, ext.MaxPoint.Y, 0).TransformBy(transform);
+				Point3d p4 = new Point3d(ext.MinPoint.X, ext.MaxPoint.Y, 0).TransformBy(transform);
+
+				double minX = Math.Min(Math.Min(p1.X, p2.X), Math.Min(p3.X, p4.X));
+				double minY = Math.Min(Math.Min(p1.Y, p2.Y), Math.Min(p3.Y, p4.Y));
+				double maxX = Math.Max(Math.Max(p1.X, p2.X), Math.Max(p3.X, p4.X));
+				double maxY = Math.Max(Math.Max(p1.Y, p2.Y), Math.Max(p3.Y, p4.Y));
+
+				return new Bounds2D(minX, minY, maxX, maxY);
+			}
+			catch
+			{
+				return null;
+			}
+		}
+
+		private static bool ShouldIgnoreForOwnershipBounds(Entity ent)
+		{
+			if (ent == null)
+				return true;
+
+			if (ent is AttributeReference)
+				return true;
+
+			if (ent is DBText)
+				return true;
+
+			if (ent is MText)
+				return true;
+
+			if (ent is Dimension)
+				return true;
+
+			if (ent is DBPoint)
+				return true;
+
+			return false;
+		}
+
+
+
+		private static bool BoundsIntersects(
+	Bounds2D a,
+	Bounds2D b)
+		{
+			if (a == null || !a.IsValid)
+				return false;
+
+			if (b == null || !b.IsValid)
+				return false;
+
+			if (a.MaxX < b.MinX)
+				return false;
+
+			if (a.MinX > b.MaxX)
+				return false;
+
+			if (a.MaxY < b.MinY)
+				return false;
+
+			if (a.MinY > b.MaxY)
+				return false;
+
+			return true;
+		}
+
+		private static void DebugOwnershipFailure(
+	List<SheetFrameCandidate> frames,
+	Entity ent,
+	Bounds2D entityBounds,
+	Editor ed)
+		{
+			if (ed == null)
+				return;
+
+			ed.WriteMessage(
+				"\n[OwnershipFailDetail] Handle=" +
+				ent.Handle +
+				", Type=" +
+				ent.GetType().Name +
+				", Layer=" +
+				ent.Layer +
+				", Bounds=" +
+				entityBounds);
+
+			if (entityBounds == null || !entityBounds.IsValid)
+			{
+				BlockReference br = ent as BlockReference;
+				if (br != null)
+				{
+					ed.WriteMessage(
+						", BlockPosition=(" +
+						br.Position.X.ToString("0.###") + "," +
+						br.Position.Y.ToString("0.###") + ")");
+				}
+
+				ed.WriteMessage(", Reason=InvalidBounds");
+				return;
+			}
+
+			ed.WriteMessage(
+				", Center=(" +
+				entityBounds.CenterX.ToString("0.###") + "," +
+				entityBounds.CenterY.ToString("0.###") + ")" +
+				", W=" + entityBounds.Width.ToString("0.###") +
+				", H=" + entityBounds.Height.ToString("0.###"));
+
+			for (int i = 0; i < frames.Count; i++)
+			{
+				SheetFrameCandidate frame = frames[i];
+
+				if (frame == null || frame.Bounds == null || !frame.Bounds.IsValid)
+					continue;
+
+				bool centerInside =
+					entityBounds.CenterX >= frame.Bounds.MinX &&
+					entityBounds.CenterX <= frame.Bounds.MaxX &&
+					entityBounds.CenterY >= frame.Bounds.MinY &&
+					entityBounds.CenterY <= frame.Bounds.MaxY;
+
+				bool intersects =
+					BoundsIntersects(entityBounds, frame.Bounds);
+
+				double containedRatio =
+					entityBounds.ContainedRatioIn(frame.Bounds);
+
+				double dx =
+					entityBounds.CenterX - frame.Bounds.CenterX;
+
+				double dy =
+					entityBounds.CenterY - frame.Bounds.CenterY;
+
+				double dist =
+					Math.Sqrt(dx * dx + dy * dy);
+
+				ed.WriteMessage(
+					"\n  [FrameTest " + i + "] Handle=" +
+					frame.Handle +
+					", Type=" + frame.EntityType +
+					", CenterInside=" + centerInside +
+					", Intersects=" + intersects +
+					", ContainedRatio=" + containedRatio.ToString("0.###") +
+					", Dist=" + dist.ToString("0.###") +
+					", FrameBounds=" + frame.Bounds);
+			}
+		}
+
 
 		private static int FindBestOwningSheetIndexForBoundsEvenIfFlat(
 			List<SheetFrameCandidate> frames,

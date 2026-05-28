@@ -4,6 +4,7 @@ using FluxCad48.Brics;
 using FluxCad48.Geometry;
 using FluxCad48.ShapeViewAnalysis;
 using FluxCad48.ShapeViewAnalysis.Loops;
+using FluxCad48.ShapeViewAnalysis.Loops.Workspace;
 using FluxCad48.Sheets;
 using System;
 using System.Collections.Generic;
@@ -570,11 +571,129 @@ namespace FluxCad48.Commands
 			CopyLoopEntitiesBelow(db, ed, islands, sheetResult.FrameBounds);
 		}
 
+		private static LoopWorkspacePlacement FindNextLoopWorkspacePlacement(
+			Database db,
+			Editor ed,
+			Extents3d frameBounds,
+			Bounds2D loopBounds)
+		{
+			double gapX = 200.0;
+			double gapY = 300.0;
+
+			double startX = frameBounds.MinPoint.X;
+			double firstTopY = frameBounds.MinPoint.Y - gapY;
+			double maxRightX = frameBounds.MaxPoint.X;
+
+			Bounds2D existing =
+				FindExistingLoopWorkspaceBounds(
+					db,
+					ed,
+					frameBounds);
+
+			if (existing == null || !existing.IsValid)
+			{
+				return new LoopWorkspacePlacement
+				{
+					TargetMinX = startX,
+					TargetMaxY = firstTopY,
+					RowIndex = 0,
+					ColumnIndex = 0,
+					ExistingBounds = null
+				};
+			}
+
+			double nextX = existing.MaxX + gapX;
+			double nextTopY = existing.MaxY;
+
+			if (nextX + loopBounds.Width <= maxRightX)
+			{
+				return new LoopWorkspacePlacement
+				{
+					TargetMinX = nextX,
+					TargetMaxY = nextTopY,
+					RowIndex = 0,
+					ColumnIndex = 1,
+					ExistingBounds = existing
+				};
+			}
+
+			return new LoopWorkspacePlacement
+			{
+				TargetMinX = startX,
+				TargetMaxY = existing.MinY - gapY,
+				RowIndex = 1,
+				ColumnIndex = 0,
+				ExistingBounds = existing
+			};
+		}
+
+		private static Bounds2D FindExistingLoopWorkspaceBounds(
+			Database db,
+			Editor ed,
+			Extents3d frameBounds)
+		{
+			Bounds2D result = null;
+
+			using (Transaction tr = db.TransactionManager.StartTransaction())
+			{
+				BlockTableRecord space =
+					tr.GetObject(
+						db.CurrentSpaceId,
+						OpenMode.ForRead) as BlockTableRecord;
+
+				if (space == null)
+					return null;
+
+				foreach (ObjectId id in space)
+				{
+					Entity ent =
+						tr.GetObject(id, OpenMode.ForRead) as Entity;
+
+					if (ent == null)
+						continue;
+
+					if (!string.Equals(
+						ent.Layer,
+						"FLUX_LOOP_WORKSPACE",
+						StringComparison.OrdinalIgnoreCase))
+						continue;
+
+					Bounds2D b =
+						BricscadEntityTools.GetEntityBounds(ent);
+
+					if (b == null || !b.IsValid)
+						continue;
+
+					if (b.MaxY > frameBounds.MinPoint.Y)
+						continue;
+
+					if (result == null)
+					{
+						result = new Bounds2D(
+							b.MinX,
+							b.MinY,
+							b.MaxX,
+							b.MaxY);
+					}
+					else
+					{
+						result.ExpandToInclude(b);
+					}
+				}
+
+				tr.Commit();
+			}
+
+			return result;
+		}
+
+
+
 		private static void CopyLoopEntitiesBelow(
-	Database db,
-	Editor ed,
-	List<ViewIsland> islands,
-	Extents3d frameBounds)
+			Database db,
+			Editor ed,
+			List<ViewIsland> islands,
+			Extents3d frameBounds)
 		{
 			if (islands == null || islands.Count == 0)
 			{
@@ -600,10 +719,15 @@ namespace FluxCad48.Commands
 				return;
 			}
 
-			double gap = 300.0;
+			LoopWorkspacePlacement placement =
+				FindNextLoopWorkspacePlacement(
+					db,
+					ed,
+					frameBounds,
+					loopBounds);
 
-			double dx = frameBounds.MinPoint.X - loopBounds.MinX;
-			double dy = (frameBounds.MinPoint.Y - gap) - loopBounds.MaxY;
+			double dx = placement.TargetMinX - loopBounds.MinX;
+			double dy = placement.TargetMaxY - loopBounds.MaxY;
 
 			AppendLog(ed, string.Format(
 				"[LoopWorkspace] FrameBounds Min=({0:0.###},{1:0.###}) Max=({2:0.###},{3:0.###})",
@@ -622,10 +746,11 @@ namespace FluxCad48.Commands
 				loopBounds.Height));
 
 			AppendLog(ed, string.Format(
-				"[LoopWorkspace] Placement dx={0:0.###}, dy={1:0.###}, gap={2:0.###}",
+				"[LoopWorkspace] Placement dx={0:0.###}, dy={1:0.###}, Row={2}, Col={3}",
 				dx,
 				dy,
-				gap));
+				placement.RowIndex,
+				placement.ColumnIndex));
 
 			using (Transaction tr = db.TransactionManager.StartTransaction())
 			{

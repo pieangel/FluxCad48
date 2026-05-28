@@ -6,6 +6,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Teigha.DatabaseServices;
+using Teigha.Geometry;
+using Teigha.Colors;
 
 namespace FluxCad48.Sheets
 {
@@ -26,7 +28,7 @@ namespace FluxCad48.Sheets
 		private static bool IsFrameLikeEntity(Entity ent, Bounds2D bounds)
 		{
 			if (ent is BlockReference)
-				return IsFrameLikeBlock((BlockReference)ent, bounds);
+				return false; // BlockReference 자체는 프레임 후보 금지
 
 			if (ent is Polyline)
 				return IsFrameLikeClosedPolyline((Polyline)ent, bounds);
@@ -257,7 +259,7 @@ namespace FluxCad48.Sheets
 			}
 
 			List<SheetFrameCandidate> lineFrames =
-				DetectFourLineRectangleFrames(selectedEntities, ed);
+	DetectFourLineRectangleFrames(selectedEntities, ed);
 
 			candidates.AddRange(lineFrames);
 
@@ -265,11 +267,29 @@ namespace FluxCad48.Sheets
 				"\n[FrameDetect] FourLineCandidates=" +
 				lineFrames.Count);
 
+			// 여기를 추가
+			List<SheetFrameCandidate> blockInnerFrames =
+				DetectFramesInsideBlockReferences(selectedEntities, ed);
+
+			candidates.AddRange(blockInnerFrames);
+
+			ed?.WriteMessage(
+				"\n[FrameDetect] BlockInnerFrameCandidates=" +
+				blockInnerFrames.Count);
+
 			ed?.WriteMessage($"\n[FrameDetect] RawCandidates={candidates.Count}");
 
-			candidates = RemoveDuplicateFrames(candidates);
+			Bounds2D selectedBoundsForReject =
+				CalculateEntitiesBounds(selectedEntities);
 
-			ed?.WriteMessage($"\n[FrameDetect] AfterDuplicateFilter={candidates.Count}");
+			candidates =
+				RejectSuspiciousLargeBlockFrames(
+					candidates,
+					selectedBoundsForReject,
+					ed);
+
+			ed?.WriteMessage(
+				$"\n[FrameDetect] AfterSuspiciousLargeBlockFilter={candidates.Count}");
 
 
 			foreach (SheetFrameCandidate c in candidates)
@@ -288,6 +308,12 @@ namespace FluxCad48.Sheets
 			{
 				filtered = ResolveOverlappingFrameCandidates(candidates);
 				ed?.WriteMessage($"\n[FrameDetect] AfterOverlapFilter={filtered.Count}");
+
+				filtered = RemoveDuplicateFramesByBounds(filtered);
+
+				ed?.WriteMessage(
+					"\n[FrameDetect] AfterDuplicateBoundsFilter=" +
+					filtered.Count);
 			}
 			else
 			{
@@ -310,6 +336,502 @@ namespace FluxCad48.Sheets
 				.OrderBy(f => f.Bounds.MinY)
 				.ThenBy(f => f.Bounds.MinX)
 				.ToList();
+		}
+
+		private static List<SheetFrameCandidate> RemoveDuplicateFramesByBounds(
+	List<SheetFrameCandidate> frames)
+		{
+			var result = new List<SheetFrameCandidate>();
+
+			foreach (SheetFrameCandidate frame in frames.OrderByDescending(f => f.Score))
+			{
+				bool duplicated = result.Any(existing =>
+					IsAlmostSameBounds(existing.Bounds, frame.Bounds));
+
+				if (!duplicated)
+					result.Add(frame);
+			}
+
+			return result;
+		}
+
+		private static List<SheetFrameCandidate> DetectFramesInsideBlockReferences(
+	IReadOnlyList<Entity> selectedEntities,
+	Editor ed = null)
+		{
+			var result = new List<SheetFrameCandidate>();
+
+			if (selectedEntities == null)
+				return result;
+
+			foreach (Entity ent in selectedEntities)
+			{
+				BlockReference br = ent as BlockReference;
+
+				if (br == null)
+					continue;
+
+				List<WorldLineInfo> worldLines = new List<WorldLineInfo>();
+
+				CollectWorldLinesFromBlockReference(
+					br,
+					br.BlockTransform,
+					worldLines,
+					0);
+
+				List<SheetFrameCandidate> frames =
+					DetectFourLineRectangleFramesFromWorldLines(
+						worldLines,
+						br,
+						ed);
+
+				result.AddRange(frames);
+			}
+
+			return result;
+		}
+
+		private sealed class WorldLineInfo
+		{
+			public string Handle { get; set; }
+			public ObjectId SourceObjectId { get; set; }
+			public string Layer { get; set; }
+
+			public Point3d StartPoint { get; set; }
+			public Point3d EndPoint { get; set; }
+
+			public bool IsHorizontal { get; set; }
+			public bool IsVertical { get; set; }
+
+			public double X1 { get; set; }
+			public double X2 { get; set; }
+			public double Y1 { get; set; }
+			public double Y2 { get; set; }
+
+			public double Length
+			{
+				get
+				{
+					if (IsHorizontal)
+						return X2 - X1;
+
+					return Y2 - Y1;
+				}
+			}
+		}
+
+		private static void CollectWorldLinesFromBlockReference(
+	BlockReference br,
+	Matrix3d transform,
+	List<WorldLineInfo> result,
+	int depth)
+		{
+			if (br == null)
+				return;
+
+			if (depth > 20)
+				return;
+
+			Transaction tr =
+				br.Database.TransactionManager.TopTransaction;
+
+			if (tr == null)
+				return;
+
+			BlockTableRecord btr =
+				tr.GetObject(
+					br.BlockTableRecord,
+					OpenMode.ForRead) as BlockTableRecord;
+
+			if (btr == null)
+				return;
+
+			foreach (ObjectId childId in btr)
+			{
+				Entity child =
+					tr.GetObject(childId, OpenMode.ForRead) as Entity;
+
+				if (child == null)
+					continue;
+
+				Line line = child as Line;
+
+				if (line != null)
+				{
+					AddWorldLine(line, transform, result);
+					continue;
+				}
+
+				Polyline pline = child as Polyline;
+
+				if (pline != null)
+				{
+					AddWorldPolylineEdges(pline, transform, result);
+					continue;
+				}
+
+				BlockReference childBr = child as BlockReference;
+
+				if (childBr != null)
+				{
+					Matrix3d childTransform =
+						childBr.BlockTransform * transform;
+
+					CollectWorldLinesFromBlockReference(
+						childBr,
+						childTransform,
+						result,
+						depth + 1);
+				}
+			}
+		}
+
+		private static void AddWorldLine(
+	Line line,
+	Matrix3d transform,
+	List<WorldLineInfo> result)
+		{
+			Point3d p1 = line.StartPoint.TransformBy(transform);
+			Point3d p2 = line.EndPoint.TransformBy(transform);
+
+			AddWorldLineCore(
+				line.ObjectId,
+				line.Handle.ToString(),
+				line.Layer,
+				p1,
+				p2,
+				result);
+		}
+
+		private static void AddWorldPolylineEdges(
+	Polyline pline,
+	Matrix3d transform,
+	List<WorldLineInfo> result)
+		{
+			int n = pline.NumberOfVertices;
+
+			if (n < 2)
+				return;
+
+			int edgeCount = pline.Closed ? n : n - 1;
+
+			for (int i = 0; i < edgeCount; i++)
+			{
+				int j = (i + 1) % n;
+
+				Point2d p2a = pline.GetPoint2dAt(i);
+				Point2d p2b = pline.GetPoint2dAt(j);
+
+				Point3d p1 =
+					new Point3d(p2a.X, p2a.Y, pline.Elevation)
+					.TransformBy(transform);
+
+				Point3d p2 =
+					new Point3d(p2b.X, p2b.Y, pline.Elevation)
+					.TransformBy(transform);
+
+				AddWorldLineCore(
+					pline.ObjectId,
+					pline.Handle.ToString(),
+					pline.Layer,
+					p1,
+					p2,
+					result);
+			}
+		}
+
+		private static void AddWorldLineCore(
+	ObjectId sourceObjectId,
+	string handle,
+	string layer,
+	Point3d p1,
+	Point3d p2,
+	List<WorldLineInfo> result)
+		{
+			double angleTol = 1.0;
+			double minLength = 100.0;
+
+			double dx = Math.Abs(p2.X - p1.X);
+			double dy = Math.Abs(p2.Y - p1.Y);
+
+			if (dx < minLength && dy < minLength)
+				return;
+
+			WorldLineInfo info = new WorldLineInfo();
+			info.SourceObjectId = sourceObjectId;
+			info.Handle = handle;
+			info.Layer = layer;
+			info.StartPoint = p1;
+			info.EndPoint = p2;
+
+			if (dy <= angleTol && dx >= minLength)
+			{
+				info.IsHorizontal = true;
+				info.X1 = Math.Min(p1.X, p2.X);
+				info.X2 = Math.Max(p1.X, p2.X);
+				info.Y1 = (p1.Y + p2.Y) * 0.5;
+				info.Y2 = info.Y1;
+
+				result.Add(info);
+			}
+			else if (dx <= angleTol && dy >= minLength)
+			{
+				info.IsVertical = true;
+				info.X1 = (p1.X + p2.X) * 0.5;
+				info.X2 = info.X1;
+				info.Y1 = Math.Min(p1.Y, p2.Y);
+				info.Y2 = Math.Max(p1.Y, p2.Y);
+
+				result.Add(info);
+			}
+		}
+
+		private static List<SheetFrameCandidate> DetectFourLineRectangleFramesFromWorldLines(
+	List<WorldLineInfo> lines,
+	BlockReference ownerBlock,
+	Editor ed = null)
+		{
+			var result = new List<SheetFrameCandidate>();
+
+			if (lines == null || lines.Count == 0)
+				return result;
+
+			List<WorldLineInfo> horizontals =
+				lines.Where(x => x.IsHorizontal).ToList();
+
+			List<WorldLineInfo> verticals =
+				lines.Where(x => x.IsVertical).ToList();
+
+			double tol = 5.0;
+
+			foreach (WorldLineInfo h1 in horizontals)
+			{
+				foreach (WorldLineInfo h2 in horizontals)
+				{
+					if (h1 == h2)
+						continue;
+
+					double topY = Math.Max(h1.Y1, h2.Y1);
+					double bottomY = Math.Min(h1.Y1, h2.Y1);
+
+					if (topY - bottomY < 100.0)
+						continue;
+
+					WorldLineInfo top = h1.Y1 >= h2.Y1 ? h1 : h2;
+					WorldLineInfo bottom = h1.Y1 < h2.Y1 ? h1 : h2;
+
+					foreach (WorldLineInfo v1 in verticals)
+					{
+						foreach (WorldLineInfo v2 in verticals)
+						{
+							if (v1 == v2)
+								continue;
+
+							double leftX = Math.Min(v1.X1, v2.X1);
+							double rightX = Math.Max(v1.X1, v2.X1);
+
+							if (rightX - leftX < 100.0)
+								continue;
+
+							WorldLineInfo left = v1.X1 <= v2.X1 ? v1 : v2;
+							WorldLineInfo right = v1.X1 > v2.X1 ? v1 : v2;
+
+							if (!IsWorldRectangleCornerMatched(
+								top,
+								bottom,
+								left,
+								right,
+								tol))
+							{
+								continue;
+							}
+
+							Bounds2D bounds =
+								new Bounds2D(
+									leftX,
+									bottomY,
+									rightX,
+									topY);
+
+							if (!IsLargeEnoughFrame(bounds))
+								continue;
+
+							if (!IsFrameLikeByBounds(bounds))
+								continue;
+
+							double area = bounds.Width * bounds.Height;
+
+							SheetFrameCandidate candidate =
+								new SheetFrameCandidate();
+
+							candidate.ObjectId = ownerBlock.ObjectId;
+							candidate.Handle =
+								"BR:" + ownerBlock.Handle.ToString() +
+								"/INNER:" +
+								top.Handle + "+" +
+								bottom.Handle + "+" +
+								left.Handle + "+" +
+								right.Handle;
+
+							candidate.EntityType = "BlockInnerFourLineRectangle";
+							candidate.Layer = ownerBlock.Layer;
+							candidate.Bounds = bounds;
+							candidate.InsideEntityCount = 999;
+							candidate.Score =
+								80.0 + Math.Min(area / 100000.0, 30);
+
+							result.Add(candidate);
+						}
+					}
+				}
+			}
+
+			return result;
+		}
+
+		private static bool IsWorldRectangleCornerMatched(
+	WorldLineInfo top,
+	WorldLineInfo bottom,
+	WorldLineInfo left,
+	WorldLineInfo right,
+	double tol)
+		{
+			if (!WorldHorizontalCoversX(top, left.X1, tol))
+				return false;
+
+			if (!WorldHorizontalCoversX(top, right.X1, tol))
+				return false;
+
+			if (!WorldHorizontalCoversX(bottom, left.X1, tol))
+				return false;
+
+			if (!WorldHorizontalCoversX(bottom, right.X1, tol))
+				return false;
+
+			if (!WorldVerticalCoversY(left, top.Y1, tol))
+				return false;
+
+			if (!WorldVerticalCoversY(left, bottom.Y1, tol))
+				return false;
+
+			if (!WorldVerticalCoversY(right, top.Y1, tol))
+				return false;
+
+			if (!WorldVerticalCoversY(right, bottom.Y1, tol))
+				return false;
+
+			return true;
+		}
+
+		private static bool WorldHorizontalCoversX(
+	WorldLineInfo h,
+	double x,
+	double tol)
+		{
+			return x >= h.X1 - tol && x <= h.X2 + tol;
+		}
+
+		private static bool WorldVerticalCoversY(
+	WorldLineInfo v,
+	double y,
+	double tol)
+		{
+			return y >= v.Y1 - tol && y <= v.Y2 + tol;
+		}
+
+		private static List<SheetFrameCandidate> RejectSuspiciousLargeBlockFrames(
+	List<SheetFrameCandidate> candidates,
+	Bounds2D selectedBounds,
+	Editor ed = null)
+		{
+			var result = new List<SheetFrameCandidate>();
+
+			if (candidates == null)
+				return result;
+
+			foreach (SheetFrameCandidate c in candidates)
+			{
+				if (c == null || c.Bounds == null || !c.Bounds.IsValid)
+					continue;
+
+				bool reject = IsSuspiciousLargeBlockFrame(
+					c,
+					selectedBounds);
+
+				if (reject)
+				{
+					ed?.WriteMessage(
+						"\n[FrameReject SuspiciousLargeBlock] Handle=" +
+						c.Handle +
+						", Type=" + c.EntityType +
+						", Bounds=" + c.Bounds);
+
+					continue;
+				}
+
+				result.Add(c);
+			}
+
+			return result;
+		}
+
+		private static bool IsSuspiciousLargeBlockFrame(
+	SheetFrameCandidate candidate,
+	Bounds2D selectedBounds)
+		{
+			if (candidate == null)
+				return true;
+
+			if (candidate.Bounds == null || !candidate.Bounds.IsValid)
+				return true;
+
+			if (selectedBounds == null || !selectedBounds.IsValid)
+				return false;
+
+			if (!string.Equals(
+				candidate.EntityType,
+				"BlockReference",
+				StringComparison.OrdinalIgnoreCase))
+			{
+				return false;
+			}
+
+			double areaRatio =
+				candidate.Bounds.Area / selectedBounds.Area;
+
+			if (areaRatio < 1.8)
+				return false;
+
+			bool hasSimilarFourLine =
+				HasSimilarOrSmallerFourLineCandidate(
+					candidate,
+					selectedBounds);
+
+			if (hasSimilarFourLine)
+				return true;
+
+			if (areaRatio > 2.5)
+				return true;
+
+			return false;
+		}
+
+		private static bool HasSimilarOrSmallerFourLineCandidate(
+	SheetFrameCandidate blockCandidate,
+	Bounds2D selectedBounds)
+		{
+			// 일단 단순 버전:
+			// selectedBounds보다 훨씬 큰 BlockReference는 위험 후보로 본다.
+			// 추후 candidates 전체를 넘겨 FourLineRectangle과 직접 비교하도록 개선 가능.
+			if (blockCandidate == null ||
+				blockCandidate.Bounds == null ||
+				!blockCandidate.Bounds.IsValid)
+				return false;
+
+			double areaRatio =
+				blockCandidate.Bounds.Area / selectedBounds.Area;
+
+			return areaRatio > 1.8;
 		}
 
 		private sealed class FrameLineInfo
@@ -973,5 +1495,98 @@ namespace FluxCad48.Sheets
 				.ThenByDescending(f => f.Score)
 				.FirstOrDefault();
 		}
+
+		public static void DebugDrawBoundsForCoordinateCheck(
+			Transaction tr,
+	Database db,
+	Editor ed,
+	IReadOnlyList<Entity> selectedEntities)
+		{
+			if (db == null || selectedEntities == null)
+				return;
+
+			List<SheetFrameCandidate> frames =
+				DetectCore(
+					selectedEntities,
+					null,
+					false,
+					ed,
+					false);
+
+			
+				BlockTable bt =
+					(BlockTable)tr.GetObject(
+						db.BlockTableId,
+						OpenMode.ForRead);
+
+				BlockTableRecord ms =
+					(BlockTableRecord)tr.GetObject(
+						bt[BlockTableRecord.ModelSpace],
+						OpenMode.ForWrite);
+
+				foreach (SheetFrameCandidate frame in frames)
+				{
+					DrawBoundsRect(
+						ms,
+						tr,
+						frame.Bounds,
+						2, // 노랑
+						"FRAME_USED_BOUNDS");
+				}
+
+				foreach (Entity ent in selectedEntities)
+				{
+					Bounds2D b =
+						BricscadEntityTools.GetEntityBounds(ent);
+
+					if (b == null || !b.IsValid)
+						continue;
+
+					DrawBoundsRect(
+						ms,
+						tr,
+						b,
+						1, // 빨강
+						"ENTITY_USED_BOUNDS");
+				}
+
+				tr.Commit();
+			
+
+			ed?.WriteMessage(
+				"\n[CoordCheck] FrameBounds=Yellow, EntityBounds=Red 표시 완료");
+		}
+
+		private static void DrawBoundsRect(
+	BlockTableRecord ms,
+	Transaction tr,
+	Bounds2D b,
+	short colorIndex,
+	string layerName)
+		{
+			if (ms == null || tr == null)
+				return;
+
+			if (b == null || !b.IsValid)
+				return;
+
+			Polyline pl = new Polyline();
+
+			pl.AddVertexAt(0, new Point2d(b.MinX, b.MinY), 0, 0, 0);
+			pl.AddVertexAt(1, new Point2d(b.MaxX, b.MinY), 0, 0, 0);
+			pl.AddVertexAt(2, new Point2d(b.MaxX, b.MaxY), 0, 0, 0);
+			pl.AddVertexAt(3, new Point2d(b.MinX, b.MaxY), 0, 0, 0);
+			pl.Closed = true;
+
+			pl.Color =
+				Color.FromColorIndex(
+					ColorMethod.ByAci,
+					colorIndex);
+
+			ms.AppendEntity(pl);
+			tr.AddNewlyCreatedDBObject(pl, true);
+		}
+
+
 	}
 }
