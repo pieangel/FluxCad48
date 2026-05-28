@@ -1165,6 +1165,11 @@ namespace FluxCad48.Commands
 					.Where(f => IsFrameFullyInsideSelection(f.Bounds, selectionBounds))
 					.ToList();
 
+				frames = FilterDetachedSmallAuxiliaryFrames(
+					frames,
+					selectedEntities,
+					ed);
+
 				ed.WriteMessage(
 					"\n[V2] DetectedFrames=" +
 					frames.Count);
@@ -1258,12 +1263,29 @@ namespace FluxCad48.Commands
 							placement.MoveY,
 							0);
 
+
+					HashSet<ObjectId> sourceTopLevelIds = new HashSet<ObjectId>();
+
+					foreach (ObjectId id in placement.SourceSheet.EntityIds)
+					{
+						idsToClone.Add(id);
+						sourceTopLevelIds.Add(id);
+					}
+
+
 					int clonedCount = 0;
+					int dependencySkippedCount = 0;
 
 					foreach (IdPair pair in mapping)
 					{
 						if (!pair.IsCloned)
 							continue;
+
+						if (!sourceTopLevelIds.Contains(pair.Key))
+						{
+							dependencySkippedCount++;
+							continue;
+						}
 
 						Entity clonedEntity =
 							tr.GetObject(pair.Value, OpenMode.ForWrite) as Entity;
@@ -1275,6 +1297,7 @@ namespace FluxCad48.Commands
 							Matrix3d.Displacement(displacement));
 
 						SetSheetCodeXData(tr, db, clonedEntity, sheetCode);
+
 						clonedCount++;
 					}
 
@@ -1342,6 +1365,8 @@ namespace FluxCad48.Commands
 						placement.SourceSheet.EntityIds.Count +
 						", Cloned=" +
 						clonedCount +
+						", DependencySkipped=" +
+						dependencySkippedCount +
 						", Bounds=" +
 						placement.SourceBounds);
 				}
@@ -1353,6 +1378,115 @@ namespace FluxCad48.Commands
 					"DetectedSheets=" + sheets.Count +
 					", TotalCloned=" + totalCloned);
 			}
+		}
+
+		private static List<SheetFrameCandidate> FilterDetachedSmallAuxiliaryFrames(
+	List<SheetFrameCandidate> frames,
+	IReadOnlyList<Entity> selectedEntities,
+	Editor ed)
+		{
+			var result = new List<SheetFrameCandidate>();
+
+			foreach (SheetFrameCandidate frame in frames)
+			{
+				int visualCount = CountMeaningfulEntitiesInsideFrame(
+					selectedEntities,
+					frame.Bounds);
+
+				bool keep = visualCount >= 8;
+
+				if (!keep)
+				{
+					ed?.WriteMessage(
+						"\n[V2 SkipAuxSmallFrame] Handle=" +
+						frame.Handle +
+						", Type=" +
+						frame.EntityType +
+						", VisualCount=" +
+						visualCount +
+						", Bounds=" +
+						frame.Bounds);
+					continue;
+				}
+
+				result.Add(frame);
+			}
+
+			return result;
+		}
+
+
+		private static int CountMeaningfulEntitiesInsideFrame(
+	IReadOnlyList<Entity> entities,
+	Bounds2D frameBounds)
+		{
+			if (entities == null || frameBounds == null || !frameBounds.IsValid)
+				return 0;
+
+			int count = 0;
+
+			foreach (Entity ent in entities)
+			{
+				if (ent == null)
+					continue;
+
+				if (IsCopyCommandGeneratedMarker(ent))
+					continue;
+
+				if (!IsMeaningfulEntityForSheetFrame(ent))
+					continue;
+
+				Bounds2D b = BricscadEntityTools.GetEntityBounds(ent);
+
+				if (b == null || !b.IsValid)
+					continue;
+
+				if (IsEntityInsideSheetFrameForCopy(frameBounds, b))
+					count++;
+			}
+
+			return count;
+		}
+
+		private static bool IsMeaningfulEntityForSheetFrame(Entity ent)
+		{
+			if (ent == null)
+				return false;
+
+			if (ent is Line)
+				return true;
+
+			if (ent is Polyline)
+				return true;
+
+			if (ent is Polyline2d)
+				return true;
+
+			if (ent is Polyline3d)
+				return true;
+
+			if (ent is Circle)
+				return true;
+
+			if (ent is Arc)
+				return true;
+
+			if (ent is Ellipse)
+				return true;
+
+			if (ent is BlockReference)
+				return true;
+
+			if (ent is DBText)
+				return true;
+
+			if (ent is MText)
+				return true;
+
+			if (ent is Dimension)
+				return true;
+
+			return false;
 		}
 
 		private static Bounds2D GetOriginalDrawingBounds(
@@ -1964,6 +2098,28 @@ namespace FluxCad48.Commands
 				}
 
 				int ownerIndex = -1;
+
+				int forcedFrameIndex =
+					FindFrameIndexByFrameOwnerBlock(
+						frames,
+						id,
+						ent.Handle.ToString());
+
+				if (forcedFrameIndex >= 0)
+				{
+					ownerIndex = forcedFrameIndex;
+
+					ed.WriteMessage(
+						"\n[V2 ForceFrameOwner] Handle=" +
+						ent.Handle +
+						", Type=" +
+						ent.GetType().Name +
+						", ForcedSheet=" +
+						(startIndex + ownerIndex + 1).ToString("000") +
+						", FrameHandle=" +
+						frames[ownerIndex].Handle);
+				}
+
 				Bounds2D entityBounds = null;
 
 				Line line = ent as Line;
@@ -2058,7 +2214,68 @@ namespace FluxCad48.Commands
 
 				// V2 핵심 정책:
 				// 소속만 판정하고, BlockReference/Bounds 안전성 검증으로 탈락시키지 않는다.
-				// 즉, Bounds 없음 / 비정상 Extents / 큰 BlockReference 문제는 복사 단계에서 판단하지 않는다.
+				// 다만 BlockInnerFourLineRectangle은 "가상 프레임"이므로,
+				// 그 ObjectId가 부모 BlockReference를 가리키는 경우 부모 블록 전체를 복사하면 안 된다.
+				/*
+				SheetFrameCandidate ownerFrame = frames[ownerIndex];
+
+				bool isVirtualInnerFrame =
+					ownerFrame != null &&
+					string.Equals(
+						ownerFrame.EntityType,
+						"BlockInnerFourLineRectangle",
+						StringComparison.OrdinalIgnoreCase);
+
+				bool isSameObjectId =
+					isVirtualInnerFrame &&
+					ownerFrame.ObjectId == id;
+
+				bool isSameBlockHandle =
+					isVirtualInnerFrame &&
+					ownerFrame.Handle != null &&
+					ownerFrame.Handle.StartsWith(
+						"BR:" + ent.Handle.ToString(),
+						StringComparison.OrdinalIgnoreCase);
+
+				bool isVirtualInnerFrameOwner =
+					isSameObjectId || isSameBlockHandle;
+				
+				if (isVirtualInnerFrameOwner)
+				{
+					ed.WriteMessage(
+						"\n[V2 SkipVirtualFrameOwnerBlock] Sheet=" +
+						(startIndex + ownerIndex + 1).ToString("000") +
+						", Handle=" + ent.Handle +
+						", Type=" + ent.GetType().Name +
+						", FrameHandle=" + ownerFrame.Handle +
+						", MatchByObjectId=" + isSameObjectId +
+						", MatchByHandle=" + isSameBlockHandle);
+
+					continue;
+				}
+				*/
+
+				if (ownerIndex == 1)
+				{
+					ed.WriteMessage(
+						"\n[V2 Sheet002Candidate] Handle=" + ent.Handle +
+						", Type=" + ent.GetType().Name +
+						", Layer=" + ent.Layer +
+						", Bounds=" + entityBounds);
+				}
+				/*
+				if (ownerIndex == 1 && ent is BlockReference &&
+					(entityBounds == null || !entityBounds.IsValid))
+				{
+					ed.WriteMessage(
+						"\n[V2 SkipSheet002NullBoundsBlock] Handle=" +
+						ent.Handle +
+						", Layer=" + ent.Layer);
+
+					continue;
+				}
+				*/
+
 				if (!allSheets[ownerIndex].EntityIds.Contains(id))
 				{
 					allSheets[ownerIndex].EntityIds.Add(id);
@@ -2109,6 +2326,41 @@ namespace FluxCad48.Commands
 			}
 
 			return result;
+		}
+
+		private static int FindFrameIndexByFrameOwnerBlock(
+	List<SheetFrameCandidate> frames,
+	ObjectId id,
+	string handle)
+		{
+			if (frames == null)
+				return -1;
+
+			for (int i = 0; i < frames.Count; i++)
+			{
+				SheetFrameCandidate f = frames[i];
+
+				if (f == null)
+					continue;
+
+				if (!string.Equals(
+					f.EntityType,
+					"BlockInnerFourLineRectangle",
+					StringComparison.OrdinalIgnoreCase))
+					continue;
+
+				if (f.ObjectId == id)
+					return i;
+
+				if (!string.IsNullOrEmpty(f.Handle) &&
+					!string.IsNullOrEmpty(handle) &&
+					f.Handle.StartsWith(
+						"BR:" + handle + "/",
+						StringComparison.OrdinalIgnoreCase))
+					return i;
+			}
+
+			return -1;
 		}
 
 		private static bool IsEntitySafeToCloneAsWhole(
@@ -3134,25 +3386,15 @@ namespace FluxCad48.Commands
 		}
 
 		private static DBText CreateSheetCodeText(
-			Bounds2D bounds,
-			double offsetX,
-			double offsetY,
-			string sheetCode,
-			string layerName,
-			short colorIndex)
+	Bounds2D bounds,
+	double offsetX,
+	double offsetY,
+	string sheetCode,
+	string layerName,
+	short colorIndex)
 		{
-			double baseSize = System.Math.Min(bounds.Width, bounds.Height);
-
-			double margin = baseSize * 0.04;
-
-			// 기존 0.06의 2배
-			double height = baseSize * 0.12;
-
-			if (height < 10.0)
-				height = 10.0;
-
-			if (height > 60.0)
-				height = 60.0;
+			const double height = 120.0;
+			const double margin = 40.0;
 
 			DBText text = new DBText();
 			text.TextString = sheetCode;
@@ -3164,8 +3406,6 @@ namespace FluxCad48.Commands
 					0);
 
 			text.Height = height;
-
-			// 글자를 조금 넓게 만들어 더 굵고 강하게 보이게 함
 			text.WidthFactor = 1.15;
 
 			text.Layer = layerName;
