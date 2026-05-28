@@ -1373,6 +1373,8 @@ namespace FluxCad48.Commands
 
 				tr.Commit();
 
+				ed.SetImpliedSelection(new ObjectId[0]);
+
 				ed.WriteMessage(
 					"\nFLUX_COPY_DETECTED_SHEETS_TO_RIGHT_V2 완료: " +
 					"DetectedSheets=" + sheets.Count +
