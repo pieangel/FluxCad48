@@ -24,6 +24,103 @@ namespace FluxCad48.Commands
 		private const string MarkerLayerName = "FLUX_MARKER";
 		private const string SheetCodeAppName = "FLUX_SHEET";
 
+		[CommandMethod("FLUX_MARK_COPIED_SHEET_METADATA")]
+		public void FluxMarkCopiedSheetMetadata()
+		{
+			Document doc = Application.DocumentManager.MdiActiveDocument;
+			Database db = doc.Database;
+			Editor ed = doc.Editor;
+
+			PromptEntityOptions peo =
+				new PromptEntityOptions(
+					"\n메타데이터를 표시할 복사된 쉬트 안의 개체를 선택하세요: ");
+
+			PromptEntityResult per = ed.GetEntity(peo);
+
+			if (per.Status != PromptStatus.OK)
+				return;
+
+			CopiedSheetRecord record =
+				CopiedSheetRegistry.FindByEntityId(per.ObjectId);
+
+			if (record == null)
+			{
+				ed.WriteMessage("\n[MetadataMark] 선택한 개체가 CopiedSheetRegistry에 없습니다.");
+				return;
+			}
+
+			using (Transaction tr = db.TransactionManager.StartTransaction())
+			{
+				BlockTable bt =
+					(BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+
+				BlockTableRecord modelSpace =
+					(BlockTableRecord)tr.GetObject(
+						bt[BlockTableRecord.ModelSpace],
+						OpenMode.ForWrite);
+
+				BricscadEntityTools.EnsureLayer(tr, db, CopiedLayerName);
+
+				SheetMetadata metadata =
+					CopiedSheetMetadataExtractor.Extract(record);
+
+				string text =
+					"재질 : " + metadata.DisplayMaterial +
+					", 수량 : " + metadata.DisplayQuantity;
+
+				DBText metadataLabel =
+					CreateCopiedSheetMetadataText(
+						record.CopiedBounds,
+						0,
+						0,
+						"재질 : " + metadata.DisplayMaterial +
+						", 수량 : " + metadata.DisplayQuantity,
+						CopiedLayerName,
+						4);
+
+				modelSpace.AppendEntity(metadataLabel);
+				tr.AddNewlyCreatedDBObject(metadataLabel, true);
+
+				SetSheetCodeXData(tr, db, metadataLabel, record.SheetCode);
+
+				tr.Commit();
+
+				ed.WriteMessage(
+					"\n[MetadataMark] Sheet=" + record.SheetCode +
+					", " + text);
+			}
+		}
+
+		private static DBText CreateCopiedSheetMetadataText(
+	Bounds2D bounds,
+	double offsetX,
+	double offsetY,
+	string text,
+	string layerName,
+	short colorIndex)
+		{
+			const double height = 70.0;
+			const double margin = 40.0;
+
+			DBText label = new DBText();
+
+			label.TextString = text;
+			label.Position =
+				new Point3d(
+					bounds.MinX + offsetX + 300.0,
+					bounds.MaxY + margin + offsetY,
+					0);
+
+			label.Height = height;
+			label.WidthFactor = 0.9;
+			label.Layer = layerName;
+			label.Color = Color.FromColorIndex(ColorMethod.ByAci, colorIndex);
+
+			return label;
+		}
+
+
+
 		[CommandMethod("FLUX_DEBUG_DUMP_COPIED_SHEET_TEXTS")]
 		public void DebugDumpCopiedSheetTexts()
 		{

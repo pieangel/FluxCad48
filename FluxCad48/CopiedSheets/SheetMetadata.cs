@@ -23,6 +23,36 @@ namespace FluxCad48.CopiedSheets
 		public List<string> RawTexts { get; private set; }
 		public List<string> Warnings { get; private set; }
 
+		public string DisplayQuantity
+		{
+			get
+			{
+				if (!string.IsNullOrWhiteSpace(QuantityText))
+					return QuantityText;
+
+				if (Quantity.HasValue)
+					return Quantity.Value.ToString();
+
+				return "없음";
+			}
+		}
+
+		public string DisplayMaterial
+		{
+			get
+			{
+				if (!string.IsNullOrWhiteSpace(Material))
+					return Material;
+
+				return "없음";
+			}
+		}
+
+		public string ToDisplayText()
+		{
+			return "재질 : " + DisplayMaterial + ", 수량 : " + DisplayQuantity;
+		}
+
 		public SheetMetadata()
 		{
 			Material = "";
