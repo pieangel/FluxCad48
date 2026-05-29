@@ -16,8 +16,20 @@ namespace FluxCad48.CopiedSheets
 
 			List<SheetEntity> texts = GetTextEntities(record);
 
+			// 여기에 추가
+			foreach (SheetEntity ent in texts)
+			{
+				string text = Normalize(ent.Text);
+
+				if (!string.IsNullOrWhiteSpace(text))
+					metadata.RawTexts.Add(text);
+			}
+
 			metadata.ExtraQuantityText = FindSetText(texts);
 			metadata.QuantityText = FindQuantityText(texts);
+
+			if (string.IsNullOrWhiteSpace(metadata.QuantityText))
+				metadata.QuantityText = ExtractQuantityFromSetText(metadata.ExtraQuantityText);
 
 			int qty;
 			if (int.TryParse(metadata.QuantityText, out qty))
@@ -26,6 +38,19 @@ namespace FluxCad48.CopiedSheets
 			record.Metadata = metadata;
 
 			return metadata;
+		}
+
+		private static string ExtractQuantityFromSetText(string text)
+		{
+			if (string.IsNullOrWhiteSpace(text))
+				return "";
+
+			Match m = Regex.Match(text, @"^\s*(\d+)\s*[\*xX]");
+
+			if (m.Success)
+				return m.Groups[1].Value;
+
+			return "";
 		}
 
 		private static List<SheetEntity> GetTextEntities(CopiedSheetRecord record)

@@ -325,6 +325,14 @@ namespace FluxCad48.Commands
 					SheetMetadata metadata =
 						CopiedSheetMetadataExtractor.Extract(record);
 
+					int dumpCount = Math.Min(metadata.RawTexts.Count, 20);
+
+					for (int i = 0; i < dumpCount; i++)
+					{
+						ed.WriteMessage(
+							"\n    TXT[" + i + "] = [" + metadata.RawTexts[i] + "]");
+					}
+
 					ed.WriteMessage(
 						"\n[" + record.SheetCode + "]" +
 						" Entities=" + record.CopiedEntities.Count +
