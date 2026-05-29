@@ -819,6 +819,14 @@ namespace FluxCad48.Commands
 					SheetMetadata metadata =
 						CopiedSheetMetadataExtractor.Extract(record);
 
+					DBText metadataLabel =
+						AddCopiedSheetMetadataLabel(
+							tr,
+							db,
+							modelSpace,
+							record,
+							metadata);
+
 					int dumpCount = Math.Min(metadata.RawTexts.Count, 20);
 
 					for (int i = 0; i < dumpCount; i++)
@@ -848,6 +856,35 @@ namespace FluxCad48.Commands
 					"DetectedSheets=" + sheets.Count +
 					", TotalCloned=" + totalCloned);
 			}
+		}
+
+		private static DBText AddCopiedSheetMetadataLabel(
+	Transaction tr,
+	Database db,
+	BlockTableRecord modelSpace,
+	CopiedSheetRecord record,
+	SheetMetadata metadata)
+		{
+			string text =
+				record.SheetCode +
+				"  MAT : " + metadata.DisplayMaterial +
+				", QTY : " + metadata.DisplayQuantity;
+
+			DBText metadataLabel =
+				CreateCopiedSheetMetadataText(
+					record.CopiedBounds,
+					0,
+					0,
+					text,
+					CopiedLayerName,
+					4);
+
+			modelSpace.AppendEntity(metadataLabel);
+			tr.AddNewlyCreatedDBObject(metadataLabel, true);
+
+			SetSheetCodeXData(tr, db, metadataLabel, record.SheetCode);
+
+			return metadataLabel;
 		}
 
 
