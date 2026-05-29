@@ -14,7 +14,8 @@ namespace FluxCad48.CopiedSheets
 	{
 		public static void BuildCopiedSheetEntitySnapshot(
 			Transaction tr,
-			CopiedSheetRecord record)
+			CopiedSheetRecord record,
+			Editor ed)
 		{
 			if (tr == null)
 				throw new ArgumentNullException(nameof(tr));

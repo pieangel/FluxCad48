@@ -200,12 +200,12 @@ namespace FluxCad48.Commands
 					ObjectIdCollection idsToClone = new ObjectIdCollection();
 					HashSet<ObjectId> sourceTopLevelIds = new HashSet<ObjectId>();
 
-					CopiedSheetRecord copiedInfo = new CopiedSheetRecord();
+					CopiedSheetRecord record = new CopiedSheetRecord();
 
-					copiedInfo.SheetCode = sheetCode;
-					copiedInfo.SourceBounds = placement.SourceBounds;
-					copiedInfo.MoveX = placement.MoveX;
-					copiedInfo.MoveY = placement.MoveY;
+					record.SheetCode = sheetCode;
+					record.SourceBounds = placement.SourceBounds;
+					record.MoveX = placement.MoveX;
+					record.MoveY = placement.MoveY;
 
 					foreach (ObjectId id in placement.SourceSheet.EntityIds)
 					{
@@ -248,7 +248,7 @@ namespace FluxCad48.Commands
 
 						SetSheetCodeXData(tr, db, clonedEntity, sheetCode);
 
-						copiedInfo.AddCopiedEntity(pair.Key, pair.Value);
+						record.AddCopiedEntity(pair.Key, pair.Value);
 
 						clonedCount++;
 					}
@@ -261,7 +261,7 @@ namespace FluxCad48.Commands
 						placement.SourceBounds.MaxX + placement.MoveX,
 						placement.SourceBounds.MaxY + placement.MoveY);
 
-					copiedInfo.CopiedBounds = copiedFrameBounds;
+					record.CopiedBounds = copiedFrameBounds;
 
 					Polyline copiedFrame =
 						BricscadEntityTools.CreateRectanglePolyline(copiedFrameBounds);
@@ -274,7 +274,7 @@ namespace FluxCad48.Commands
 					tr.AddNewlyCreatedDBObject(copiedFrame, true);
 					SetSheetCodeXData(tr, db, copiedFrame, sheetCode);
 
-					copiedInfo.CopiedFrameObjectId = copiedFrame.ObjectId;
+					record.CopiedFrameObjectId = copiedFrame.ObjectId;
 
 					Polyline sourceMarker =
 						BricscadEntityTools.CreateRectanglePolyline(
@@ -313,9 +313,28 @@ namespace FluxCad48.Commands
 					tr.AddNewlyCreatedDBObject(copiedLabel, true);
 					SetSheetCodeXData(tr, db, copiedLabel, sheetCode);
 
-					copiedInfo.CopiedLabelObjectId = copiedLabel.ObjectId;
+					record.CopiedLabelObjectId = copiedLabel.ObjectId;
 
-					CopiedSheetRegistry.Register(copiedInfo);
+					// 여기서 SheetEntity Snapshot 생성
+					CopiedSheetSnapshotBuilder.BuildCopiedSheetEntitySnapshot(
+						tr,
+						record,
+						ed);
+
+					// 필요하면 바로 Metadata 추출도 가능
+					SheetMetadata metadata =
+						CopiedSheetMetadataExtractor.Extract(record);
+
+					ed.WriteMessage(
+						"\n[" + record.SheetCode + "]" +
+						" Entities=" + record.CopiedEntities.Count +
+						", RawTexts=" + metadata.RawTexts.Count +
+						", QTY=" + metadata.QuantityText +
+						", SET=" + metadata.ExtraQuantityText +
+						", MAT=" + metadata.Material +
+						", THK=" + metadata.ThicknessSource);
+
+					CopiedSheetRegistry.Register(record);
 				}
 
 				tr.Commit();
