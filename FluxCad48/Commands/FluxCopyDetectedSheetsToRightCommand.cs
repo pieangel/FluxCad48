@@ -64,17 +64,22 @@ namespace FluxCad48.Commands
 				SheetMetadata metadata =
 					CopiedSheetMetadataExtractor.Extract(record);
 
+				ed.WriteMessage(
+					"\n[MetadataMark] Material=[" + metadata.DisplayMaterial +
+					"], Qty=[" + metadata.DisplayQuantity + "]");
+
+
 				string text =
-					"재질 : " + metadata.DisplayMaterial +
-					", 수량 : " + metadata.DisplayQuantity;
+					record.SheetCode +
+					"  MAT : " + metadata.DisplayMaterial +
+					", QTY : " + metadata.DisplayQuantity;
 
 				DBText metadataLabel =
 					CreateCopiedSheetMetadataText(
 						record.CopiedBounds,
 						0,
 						0,
-						"재질 : " + metadata.DisplayMaterial +
-						", 수량 : " + metadata.DisplayQuantity,
+						text,
 						CopiedLayerName,
 						4);
 

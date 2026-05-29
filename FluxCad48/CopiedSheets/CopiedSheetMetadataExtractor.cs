@@ -1,7 +1,8 @@
-﻿using System;
+﻿using FluxCad48.Geometry;
+using FluxCad48.ShapeViewAnalysis;
+using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
-using FluxCad48.ShapeViewAnalysis;
 
 namespace FluxCad48.CopiedSheets
 {
@@ -16,7 +17,6 @@ namespace FluxCad48.CopiedSheets
 
 			List<SheetEntity> texts = GetTextEntities(record);
 
-			// 여기에 추가
 			foreach (SheetEntity ent in texts)
 			{
 				string text = Normalize(ent.Text);
@@ -25,11 +25,23 @@ namespace FluxCad48.CopiedSheets
 					metadata.RawTexts.Add(text);
 			}
 
-			metadata.ExtraQuantityText = FindSetText(texts);
-			metadata.QuantityText = FindQuantityText(texts);
+			// 1) BOM 행 기반으로 재질/수량 동시 추출
+			ExtractBomMetadataByMaterialRow(texts, metadata);
 
+			// 2) BOM 방식 실패 시 SET 수량 사용
 			if (string.IsNullOrWhiteSpace(metadata.QuantityText))
-				metadata.QuantityText = ExtractQuantityFromSetText(metadata.ExtraQuantityText);
+			{
+				metadata.ExtraQuantityText = FindSetText(texts);
+				metadata.QuantityText =
+					ExtractQuantityFromSetText(metadata.ExtraQuantityText);
+			}
+
+			// 3) 마지막 fallback은 당분간 비활성 권장
+			// FindQuantityText는 치수값을 수량으로 오인할 위험이 큽니다.
+			/*
+			if (string.IsNullOrWhiteSpace(metadata.QuantityText))
+				metadata.QuantityText = FindQuantityText(texts);
+			*/
 
 			int qty;
 			if (int.TryParse(metadata.QuantityText, out qty))
@@ -39,6 +51,160 @@ namespace FluxCad48.CopiedSheets
 
 			return metadata;
 		}
+
+		private static void ExtractBomMetadataByMaterialRow(
+	List<SheetEntity> texts,
+	SheetMetadata metadata)
+		{
+			SheetEntity matHeader = FindMaterialHeader(texts);
+			SheetEntity qtyHeader = FindQuantityHeader(texts);
+
+			if (matHeader == null || qtyHeader == null)
+				return;
+
+			if (matHeader.Bounds == null || qtyHeader.Bounds == null)
+				return;
+
+			SheetEntity matValue =
+				FindValueNearHeaderColumn(texts, matHeader, true);
+
+			if (matValue == null)
+				return;
+
+			metadata.Material = CleanMaterialValue(matValue.Text);
+
+			SheetEntity qtyValue =
+				FindValueAtSameRowAndHeaderColumn(
+					texts,
+					matValue,
+					qtyHeader,
+					false);
+
+			if (qtyValue != null)
+				metadata.QuantityText = CleanQuantityValue(qtyValue.Text);
+		}
+
+		private static SheetEntity FindValueNearHeaderColumn(
+	List<SheetEntity> texts,
+	SheetEntity header,
+	bool material)
+		{
+			double hx = CenterX(header);
+			double hy = CenterY(header);
+
+			SheetEntity best = null;
+			double bestScore = double.MaxValue;
+
+			foreach (SheetEntity ent in texts)
+			{
+				if (ent == null || ent == header || ent.Bounds == null)
+					continue;
+
+				string s = NormalizeText(ent.Text);
+
+				if (IsMaterialHeader(s) || IsQuantityHeader(s))
+					continue;
+
+				if (material)
+				{
+					if (!LooksLikeMaterialValue(s))
+						continue;
+				}
+				else
+				{
+					if (!LooksLikeQuantityValue(s))
+						continue;
+				}
+
+				double dx = Math.Abs(CenterX(ent) - hx);
+				double dy = Math.Abs(CenterY(ent) - hy);
+
+				if (dx > 300.0)
+					continue;
+
+				if (dy > 1000.0)
+					continue;
+
+				double score = dx * 2.0 + dy;
+
+				if (score < bestScore)
+				{
+					bestScore = score;
+					best = ent;
+				}
+			}
+
+			return best;
+		}
+
+		private static SheetEntity FindValueAtSameRowAndHeaderColumn(
+	List<SheetEntity> texts,
+	SheetEntity rowAnchor,
+	SheetEntity columnHeader,
+	bool material)
+		{
+			double rowY = CenterY(rowAnchor);
+			double colX = CenterX(columnHeader);
+
+			SheetEntity best = null;
+			double bestScore = double.MaxValue;
+
+			foreach (SheetEntity ent in texts)
+			{
+				if (ent == null || ent.Bounds == null)
+					continue;
+
+				if (ent == rowAnchor || ent == columnHeader)
+					continue;
+
+				string s = NormalizeText(ent.Text);
+
+				if (IsMaterialHeader(s) || IsQuantityHeader(s))
+					continue;
+
+				if (material)
+				{
+					if (!LooksLikeMaterialValue(s))
+						continue;
+				}
+				else
+				{
+					if (!LooksLikeQuantityValue(s))
+						continue;
+				}
+
+				double dx = Math.Abs(CenterX(ent) - colX);
+				double dy = Math.Abs(CenterY(ent) - rowY);
+
+				if (dx > 300.0)
+					continue;
+
+				// 같은 BOM 행 조건
+				if (dy > 150.0)
+					continue;
+
+				double score = dx * 2.0 + dy;
+
+				if (score < bestScore)
+				{
+					bestScore = score;
+					best = ent;
+				}
+			}
+
+			return best;
+		}
+
+		private static double CenterX(SheetEntity ent)
+		{
+			return (ent.Bounds.MinX + ent.Bounds.MaxX) * 0.5;
+		}
+
+		private static double CenterY(SheetEntity ent)
+		{
+			return (ent.Bounds.MinY + ent.Bounds.MaxY) * 0.5;
+		}
+
 
 		private static string ExtractQuantityFromSetText(string text)
 		{
@@ -167,6 +333,251 @@ namespace FluxCad48.CopiedSheets
 				.Replace("\r", " ")
 				.Replace("\n", " ")
 				.Trim();
+		}
+
+
+		private static string ExtractMaterialFromBomColumnBidirectional(
+	List<SheetEntity> texts)
+		{
+			SheetEntity header = FindMaterialHeader(texts);
+
+			if (header == null || header.Bounds == null)
+				return "";
+
+			double headerCx = (header.Bounds.MinX + header.Bounds.MaxX) * 0.5;
+			double headerCy = (header.Bounds.MinY + header.Bounds.MaxY) * 0.5;
+
+			List<SheetEntity> candidates = new List<SheetEntity>();
+
+			foreach (SheetEntity t in texts)
+			{
+				if (t == null || t == header || t.Bounds == null)
+					continue;
+
+				string s = NormalizeText(t.Text);
+
+				if (IsMaterialHeader(s))
+					continue;
+
+				if (!LooksLikeMaterialValue(s))
+					continue;
+
+				double cx = (t.Bounds.MinX + t.Bounds.MaxX) * 0.5;
+				double cy = (t.Bounds.MinY + t.Bounds.MaxY) * 0.5;
+
+				double dx = Math.Abs(cx - headerCx);
+				double dy = Math.Abs(cy - headerCy);
+
+				if (dx > 300.0)
+					continue;
+
+				if (dy > 800.0)
+					continue;
+
+				candidates.Add(t);
+			}
+
+			if (candidates.Count == 0)
+				return "";
+
+			candidates.Sort(delegate (SheetEntity a, SheetEntity b)
+			{
+				double ay = (a.Bounds.MinY + a.Bounds.MaxY) * 0.5;
+				double by = (b.Bounds.MinY + b.Bounds.MaxY) * 0.5;
+
+				double da = Math.Abs(ay - headerCy);
+				double db = Math.Abs(by - headerCy);
+
+				return da.CompareTo(db);
+			});
+
+			return CleanMaterialValue(candidates[0].Text);
+		}
+
+		// 당분간 사용하지 말 것. 
+		private static string ExtractQuantityFromBomColumnBidirectional(
+	List<SheetEntity> texts)
+		{
+			SheetEntity header = FindQuantityHeader(texts);
+
+			if (header == null || header.Bounds == null)
+				return "";
+
+			double headerCx = (header.Bounds.MinX + header.Bounds.MaxX) * 0.5;
+			double headerCy = (header.Bounds.MinY + header.Bounds.MaxY) * 0.5;
+
+			List<SheetEntity> candidates = new List<SheetEntity>();
+
+			foreach (SheetEntity t in texts)
+			{
+				if (t == null || t == header || t.Bounds == null)
+					continue;
+
+				string s = NormalizeText(t.Text);
+
+				if (IsQuantityHeader(s))
+					continue;
+
+				if (!LooksLikeQuantityValue(s))
+					continue;
+
+				double cx = (t.Bounds.MinX + t.Bounds.MaxX) * 0.5;
+				double cy = (t.Bounds.MinY + t.Bounds.MaxY) * 0.5;
+
+				double dx = Math.Abs(cx - headerCx);
+				double dy = Math.Abs(cy - headerCy);
+
+				if (dx > 300.0)
+					continue;
+
+				if (dy > 800.0)
+					continue;
+
+				candidates.Add(t);
+			}
+
+			if (candidates.Count == 0)
+				return "";
+
+			candidates.Sort(delegate (SheetEntity a, SheetEntity b)
+			{
+				double ay = (a.Bounds.MinY + a.Bounds.MaxY) * 0.5;
+				double by = (b.Bounds.MinY + b.Bounds.MaxY) * 0.5;
+
+				double da = Math.Abs(ay - headerCy);
+				double db = Math.Abs(by - headerCy);
+
+				return da.CompareTo(db);
+			});
+
+			return CleanQuantityValue(candidates[0].Text);
+		}
+
+
+		private static SheetEntity FindMaterialHeader(List<SheetEntity> texts)
+		{
+			foreach (SheetEntity t in texts)
+			{
+				if (t == null)
+					continue;
+
+				if (IsMaterialHeader(NormalizeText(t.Text)))
+					return t;
+			}
+
+			return null;
+		}
+
+		private static SheetEntity FindQuantityHeader(List<SheetEntity> texts)
+		{
+			foreach (SheetEntity t in texts)
+			{
+				if (t == null)
+					continue;
+
+				if (IsQuantityHeader(NormalizeText(t.Text)))
+					return t;
+			}
+
+			return null;
+		}
+
+		private static bool IsMaterialHeader(string s)
+		{
+			return
+				s == "MATL" ||
+				s == "MAT'L" ||
+				s == "MTL" ||
+				s == "MT'L" ||
+				s == "MATERIAL" ||
+				s == "재질";
+		}
+
+		private static bool IsQuantityHeader(string s)
+		{
+			return
+				s == "QTY" ||
+				s == "Q'TY" ||
+				s == "QUANTITY" ||
+				s == "수량";
+		}
+
+		private static string NormalizeText(string text)
+		{
+			if (text == null)
+				return "";
+
+			string s = text.Trim().ToUpperInvariant();
+
+			s = s.Replace(" ", "");
+			s = s.Replace(".", "");
+			s = s.Replace(":", "");
+
+			return s;
+		}
+
+		private static bool LooksLikeMaterialValue(string s)
+		{
+			if (string.IsNullOrWhiteSpace(s))
+				return false;
+
+			s = NormalizeText(s);
+
+			if (s.Contains("SS400")) return true;
+			if (s.Contains("SS41")) return true;
+			if (s.Contains("SUS")) return true;
+			if (s.Contains("SPHC")) return true;
+			if (s.Contains("AL")) return true;
+			if (s.Contains("SM45C")) return true;
+
+			return false;
+		}
+
+		private static bool LooksLikeQuantityValue(string s)
+		{
+			if (string.IsNullOrWhiteSpace(s))
+				return false;
+
+			s = NormalizeText(s);
+			s = s.Replace("EA", "");
+
+			// 단순 수량: 1, 2, 12
+			if (Regex.IsMatch(s, @"^\d+$"))
+				return true;
+
+			// 곱셈 수량: 1*2, 4X2
+			if (Regex.IsMatch(s, @"^\d+[\*X]\d+$"))
+				return true;
+
+			// 대칭 수량: 1/1(대칭)*2
+			if (Regex.IsMatch(s, @"^\d+/\d+\(.+\)[\*X]\d+$"))
+				return true;
+
+			// 조금 더 느슨한 현업형: 숫자/슬래시/괄호/한글/곱셈만 포함
+			if (Regex.IsMatch(s, @"^[0-9/()\*X가-힣]+$") &&
+				(s.Contains("*") || s.Contains("X") || s.Contains("/") || s.Contains("대칭")))
+				return true;
+
+			return false;
+		}
+
+		private static string CleanMaterialValue(string text)
+		{
+			if (text == null)
+				return "";
+
+			return text.Trim();
+		}
+
+		private static string CleanQuantityValue(string text)
+		{
+			if (text == null)
+				return "";
+
+			string s = text.Trim();
+			s = s.Replace("EA", "");
+			s = s.Replace("ea", "");
+			return s.Trim();
 		}
 	}
 }
