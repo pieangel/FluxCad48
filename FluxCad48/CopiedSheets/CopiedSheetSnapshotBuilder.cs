@@ -1,11 +1,12 @@
-﻿using FluxCad48.ShapeViewAnalysis;
+﻿using Bricscad.EditorInput;
+using FluxCad48.Geometry;
+using FluxCad48.ShapeViewAnalysis;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Teigha.DatabaseServices;
-using Bricscad.EditorInput;
 
 namespace FluxCad48.CopiedSheets
 {
@@ -50,7 +51,75 @@ namespace FluxCad48.CopiedSheets
 			se.EntityType = ent.GetType().Name;
 			se.Layer = ent.Layer;
 
+			Extents3d? ex = ent.GeometricExtents;
+
+			if (ex.HasValue)
+			{
+				se.Bounds = new Bounds2D(
+					ex.Value.MinPoint.X,
+					ex.Value.MinPoint.Y,
+					ex.Value.MaxPoint.X,
+					ex.Value.MaxPoint.Y);
+			}
+
+			//-----------------------------------------
+			// DBText
+			//-----------------------------------------
+			DBText dbText = ent as DBText;
+
+			if (dbText != null)
+			{
+				se.Text = dbText.TextString;
+				se.TextHeight = dbText.Height;
+				se.RotationDeg =
+					dbText.Rotation * 180.0 / Math.PI;
+
+				return se;
+			}
+
+			//-----------------------------------------
+			// MText
+			//-----------------------------------------
+			MText mt = ent as MText;
+
+			if (mt != null)
+			{
+				se.Text = mt.Text;
+				se.TextHeight = mt.TextHeight;
+
+				return se;
+			}
+
+			//-----------------------------------------
+			// Dimension
+			//-----------------------------------------
+			Dimension dim = ent as Dimension;
+
+			if (dim != null)
+			{
+				se.Text = dim.DimensionText;
+
+				return se;
+			}
+
 			return se;
+		}
+
+		public static List<SheetEntity> GetTextEntities(
+			CopiedSheetRecord record)
+		{
+			List<SheetEntity> result =
+				new List<SheetEntity>();
+
+			foreach (SheetEntity ent in record.CopiedEntities)
+			{
+				if (string.IsNullOrWhiteSpace(ent.Text))
+					continue;
+
+				result.Add(ent);
+			}
+
+			return result;
 		}
 
 		private static void AppendLog(Editor ed, string message)

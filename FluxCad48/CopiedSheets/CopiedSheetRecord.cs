@@ -29,7 +29,7 @@ namespace FluxCad48.CopiedSheets
 		public List<SheetEntity> SourceEntities { get; private set; }
 		public List<SheetEntity> CopiedEntities { get; private set; }
 
-		public SheetMetadata Metadata { get; set; }
+		public SheetMetadata Metadata { get; set; } = new SheetMetadata();
 
 		public CopiedSheetRecord()
 		{
