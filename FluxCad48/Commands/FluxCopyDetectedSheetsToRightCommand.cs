@@ -21,6 +21,504 @@ namespace FluxCad48.Commands
 		private const string MarkerLayerName = "FLUX_MARKER";
 		private const string SheetCodeAppName = "FLUX_SHEET";
 
+
+		[CommandMethod("FLUX_COPY_DETECTED_SHEETS_TO_RIGHT_FAST")]
+		public void FluxCopyDetectedSheetsToRightFast()
+		{
+			Document doc = Application.DocumentManager.MdiActiveDocument;
+			Database db = doc.Database;
+			Editor ed = doc.Editor;
+
+			PromptPointResult ppr1 =
+				ed.GetPoint(new PromptPointOptions(
+					"\n[FAST] 복사할 쉬트 영역의 첫 번째 구석점을 지정하세요: "));
+
+			if (ppr1.Status != PromptStatus.OK)
+				return;
+
+			PromptCornerOptions pco =
+				new PromptCornerOptions(
+					"\n[FAST] 반대 구석점을 지정하세요: ",
+					ppr1.Value);
+
+			PromptPointResult ppr2 = ed.GetCorner(pco);
+
+			if (ppr2.Status != PromptStatus.OK)
+				return;
+
+			PromptSelectionResult psr =
+				ed.SelectCrossingWindow(ppr1.Value, ppr2.Value);
+
+			if (psr.Status != PromptStatus.OK)
+			{
+				ed.WriteMessage("\n[FAST] 선택된 객체가 없습니다.");
+				return;
+			}
+
+			ObjectId[] selectedIds = psr.Value.GetObjectIds();
+
+			ed.SetImpliedSelection(selectedIds);
+
+			PromptKeywordOptions confirmOptions =
+				new PromptKeywordOptions(
+					"\n[FAST] 선택 상태를 확인하세요. 계속 진행하시겠습니까? [Yes/No] <Yes>: ");
+
+			confirmOptions.Keywords.Add("Yes");
+			confirmOptions.Keywords.Add("No");
+			confirmOptions.Keywords.Default = "Yes";
+			confirmOptions.AllowNone = true;
+
+			PromptResult confirmResult = ed.GetKeywords(confirmOptions);
+
+			if (confirmResult.Status != PromptStatus.OK ||
+				string.Equals(confirmResult.StringResult, "No", StringComparison.OrdinalIgnoreCase))
+			{
+				ed.SetImpliedSelection(new ObjectId[0]);
+				ed.WriteMessage("\n[FAST] 취소되었습니다.");
+				return;
+			}
+
+			using (Transaction tr = db.TransactionManager.StartTransaction())
+			{
+				List<Entity> selectedEntities = new List<Entity>();
+
+				foreach (ObjectId id in selectedIds)
+				{
+					Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+
+					if (ent != null)
+						selectedEntities.Add(ent);
+				}
+
+				List<SheetFrameCandidate> frames =
+					SheetFrameDetector.Detect(selectedEntities, null);
+
+				Bounds2D selectionBounds = new Bounds2D(
+					System.Math.Min(ppr1.Value.X, ppr2.Value.X),
+					System.Math.Min(ppr1.Value.Y, ppr2.Value.Y),
+					System.Math.Max(ppr1.Value.X, ppr2.Value.X),
+					System.Math.Max(ppr1.Value.Y, ppr2.Value.Y));
+
+				frames = frames
+					.Where(f => IsFrameFullyInsideSelection(f.Bounds, selectionBounds))
+					.ToList();
+
+				frames = FilterDetachedSmallAuxiliaryFrames(
+					frames,
+					selectedEntities,
+					null);
+
+				if (frames.Count == 0)
+				{
+					ed.WriteMessage("\n[FAST] 탐지된 쉬트 프레임이 없습니다.");
+					return;
+				}
+
+				int nextSheetIndex =
+					GetNextSheetIndexFromDrawingFast(tr, db);
+
+				List<SheetRegion> sheets =
+					BuildSheetRegionsFromDetectedFramesForPureCopyFast(
+						tr,
+						db,
+						frames,
+						selectedIds,
+						nextSheetIndex);
+
+				if (sheets.Count == 0)
+				{
+					ed.WriteMessage("\n[FAST] 복사할 쉬트 내부 객체가 없습니다.");
+					return;
+				}
+
+				Bounds2D drawingBounds = GetOriginalDrawingBounds(tr, db);
+
+				if (drawingBounds == null || !drawingBounds.IsValid)
+				{
+					ed.WriteMessage("\n[FAST] 원본 도면 Bounds를 계산하지 못했습니다.");
+					return;
+				}
+
+				SheetArrangeOptions options = new SheetArrangeOptions();
+
+				Bounds2D existingCopiedBounds =
+					GetExistingCopiedSheetBounds(tr, db);
+
+				List<SheetPlacement> placements =
+					CreateWorkspacePlacementsFast(
+						sheets,
+						drawingBounds,
+						existingCopiedBounds,
+						options);
+
+				BlockTable bt =
+					(BlockTable)tr.GetObject(
+						db.BlockTableId,
+						OpenMode.ForRead);
+
+				BlockTableRecord modelSpace =
+					(BlockTableRecord)tr.GetObject(
+						bt[BlockTableRecord.ModelSpace],
+						OpenMode.ForWrite);
+
+				BricscadEntityTools.EnsureLayer(tr, db, CopiedLayerName);
+				BricscadEntityTools.EnsureLayer(tr, db, MarkerLayerName);
+
+				int totalCloned = 0;
+
+				foreach (SheetPlacement placement in placements)
+				{
+					string sheetCode = GetSheetCode(placement.SourceSheet);
+
+					ObjectIdCollection idsToClone = new ObjectIdCollection();
+					HashSet<ObjectId> sourceTopLevelIds = new HashSet<ObjectId>();
+
+					foreach (ObjectId id in placement.SourceSheet.EntityIds)
+					{
+						idsToClone.Add(id);
+						sourceTopLevelIds.Add(id);
+					}
+
+					IdMapping mapping = new IdMapping();
+
+					db.DeepCloneObjects(
+						idsToClone,
+						modelSpace.ObjectId,
+						mapping,
+						false);
+
+					Vector3d displacement =
+						new Vector3d(
+							placement.MoveX,
+							placement.MoveY,
+							0);
+
+					int clonedCount = 0;
+
+					foreach (IdPair pair in mapping)
+					{
+						if (!pair.IsCloned)
+							continue;
+
+						if (!sourceTopLevelIds.Contains(pair.Key))
+							continue;
+
+						Entity clonedEntity =
+							tr.GetObject(pair.Value, OpenMode.ForWrite) as Entity;
+
+						if (clonedEntity == null)
+							continue;
+
+						clonedEntity.TransformBy(
+							Matrix3d.Displacement(displacement));
+
+						SetSheetCodeXData(tr, db, clonedEntity, sheetCode);
+
+						clonedCount++;
+					}
+
+					totalCloned += clonedCount;
+
+					Bounds2D copiedFrameBounds = new Bounds2D(
+						placement.SourceBounds.MinX + placement.MoveX,
+						placement.SourceBounds.MinY + placement.MoveY,
+						placement.SourceBounds.MaxX + placement.MoveX,
+						placement.SourceBounds.MaxY + placement.MoveY);
+
+					Polyline copiedFrame =
+						BricscadEntityTools.CreateRectanglePolyline(copiedFrameBounds);
+
+					copiedFrame.Layer = CopiedLayerName;
+					copiedFrame.Color = Color.FromColorIndex(ColorMethod.ByAci, 3);
+					copiedFrame.LineWeight = LineWeight.LineWeight050;
+
+					modelSpace.AppendEntity(copiedFrame);
+					tr.AddNewlyCreatedDBObject(copiedFrame, true);
+					SetSheetCodeXData(tr, db, copiedFrame, sheetCode);
+
+					Polyline sourceMarker =
+						BricscadEntityTools.CreateRectanglePolyline(
+							placement.SourceBounds);
+
+					sourceMarker.Color = Color.FromColorIndex(ColorMethod.ByAci, 2);
+					sourceMarker.LineWeight = LineWeight.LineWeight050;
+					sourceMarker.Layer = MarkerLayerName;
+
+					modelSpace.AppendEntity(sourceMarker);
+					tr.AddNewlyCreatedDBObject(sourceMarker, true);
+
+					DBText sourceLabel =
+						CreateSheetCodeText(
+							placement.SourceBounds,
+							0,
+							0,
+							sheetCode,
+							MarkerLayerName,
+							2);
+
+					modelSpace.AppendEntity(sourceLabel);
+					tr.AddNewlyCreatedDBObject(sourceLabel, true);
+					SetSheetCodeXData(tr, db, sourceLabel, sheetCode);
+
+					DBText copiedLabel =
+						CreateSheetCodeText(
+							placement.SourceBounds,
+							placement.MoveX,
+							placement.MoveY,
+							sheetCode,
+							CopiedLayerName,
+							3);
+
+					modelSpace.AppendEntity(copiedLabel);
+					tr.AddNewlyCreatedDBObject(copiedLabel, true);
+					SetSheetCodeXData(tr, db, copiedLabel, sheetCode);
+				}
+
+				tr.Commit();
+
+				ed.SetImpliedSelection(new ObjectId[0]);
+
+				ed.WriteMessage(
+					"\nFLUX_COPY_DETECTED_SHEETS_TO_RIGHT_FAST 완료: " +
+					"DetectedSheets=" + sheets.Count +
+					", TotalCloned=" + totalCloned);
+			}
+		}
+
+
+		private static int GetNextSheetIndexFromDrawingFast(
+	Transaction tr,
+	Database db)
+		{
+			int maxNumber = 0;
+
+			BlockTable bt =
+				(BlockTable)tr.GetObject(
+					db.BlockTableId,
+					OpenMode.ForRead);
+
+			BlockTableRecord modelSpace =
+				(BlockTableRecord)tr.GetObject(
+					bt[BlockTableRecord.ModelSpace],
+					OpenMode.ForRead);
+
+			foreach (ObjectId id in modelSpace)
+			{
+				Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+
+				if (ent == null)
+					continue;
+
+				int number = TryReadSheetNumberFromEntity(ent);
+
+				if (number > maxNumber)
+					maxNumber = number;
+			}
+
+			return maxNumber;
+		}
+
+		private static List<SheetRegion> BuildSheetRegionsFromDetectedFramesForPureCopyFast(
+	Transaction tr,
+	Database db,
+	List<SheetFrameCandidate> frames,
+	ObjectId[] selectedIds,
+	int startIndex)
+		{
+			frames = SortFramesTopToBottomLeftToRight(frames);
+
+			List<SheetRegion> allSheets = new List<SheetRegion>();
+
+			for (int i = 0; i < frames.Count; i++)
+			{
+				SheetRegion sheet = new SheetRegion();
+				sheet.Bounds = frames[i].Bounds;
+				sheet.Index = startIndex + i;
+				allSheets.Add(sheet);
+			}
+
+			foreach (ObjectId id in selectedIds)
+			{
+				Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+
+				if (ent == null)
+					continue;
+
+				if (IsCopyCommandGeneratedMarker(ent))
+					continue;
+
+				int ownerIndex = -1;
+
+				int forcedFrameIndex =
+					FindFrameIndexByFrameOwnerBlock(
+						frames,
+						id,
+						ent.Handle.ToString());
+
+				if (forcedFrameIndex >= 0)
+					ownerIndex = forcedFrameIndex;
+
+				Bounds2D entityBounds = null;
+
+				Line line = ent as Line;
+
+				if (line != null)
+				{
+					ownerIndex =
+						FindBestOwningSheetIndexForLine(
+							frames,
+							line);
+				}
+
+				if (ownerIndex < 0)
+				{
+					entityBounds =
+						GetEntityWorldBoundsRecursive(
+							tr,
+							ent,
+							Matrix3d.Identity,
+							0);
+
+					if (IsUsableBoundsForOwnership(entityBounds))
+					{
+						ownerIndex =
+							FindBestOwningSheetIndex(
+								frames,
+								entityBounds);
+					}
+				}
+
+				if (ownerIndex < 0 && IsUsableBoundsForOwnership(entityBounds))
+				{
+					ownerIndex =
+						FindBestOwningSheetIndexForBoundsEvenIfFlat(
+							frames,
+							entityBounds);
+				}
+
+				if (ownerIndex < 0)
+				{
+					BlockReference br = ent as BlockReference;
+
+					if (br != null)
+					{
+						ownerIndex =
+							FindBestOwningSheetIndexForPoint(
+								frames,
+								br.Position);
+					}
+				}
+
+				if (ownerIndex < 0)
+					continue;
+
+				if (ownerIndex >= allSheets.Count)
+					continue;
+
+				if (!allSheets[ownerIndex].EntityIds.Contains(id))
+					allSheets[ownerIndex].EntityIds.Add(id);
+			}
+
+			List<SheetRegion> result = new List<SheetRegion>();
+
+			for (int i = 0; i < allSheets.Count; i++)
+			{
+				SheetRegion sheet = allSheets[i];
+
+				if (sheet.EntityIds.Count == 0)
+					continue;
+
+				sheet.Index = startIndex + result.Count;
+				result.Add(sheet);
+			}
+
+			return result;
+		}
+
+		private static List<SheetPlacement> CreateWorkspacePlacementsFast(
+	List<SheetRegion> sheets,
+	Bounds2D drawingBounds,
+	Bounds2D existingCopiedBounds,
+	SheetArrangeOptions options)
+		{
+			List<SheetPlacement> result = new List<SheetPlacement>();
+
+			if (sheets == null || sheets.Count == 0)
+				return result;
+
+			if (drawingBounds == null || !drawingBounds.IsValid)
+				return result;
+
+			double workspaceOffsetX = 3000.0;
+			double workspaceWidth = 20000.0;
+
+			double columnGap = options.ColumnGap;
+			double rowGap = options.RowGap;
+
+			double startX = drawingBounds.MaxX + workspaceOffsetX;
+			double limitX = startX + workspaceWidth;
+
+			double cursorX = startX;
+			double cursorTopY = drawingBounds.MaxY;
+
+			if (existingCopiedBounds != null && existingCopiedBounds.IsValid)
+				cursorTopY = existingCopiedBounds.MinY - 300.0;
+
+			double currentRowBottomY = double.MaxValue;
+			int rowIndex = 0;
+			int columnIndex = 0;
+
+			List<SheetRegion> ordered = new List<SheetRegion>(sheets);
+
+			for (int i = 0; i < ordered.Count; i++)
+			{
+				SheetRegion sheet = ordered[i];
+
+				double w = sheet.Bounds.Width;
+				double h = sheet.Bounds.Height;
+
+				if (cursorX > startX && cursorX + w > limitX)
+				{
+					cursorX = startX;
+					cursorTopY = currentRowBottomY - rowGap;
+					currentRowBottomY = double.MaxValue;
+
+					rowIndex++;
+					columnIndex = 0;
+				}
+
+				double targetMinX = cursorX;
+				double targetMaxY = cursorTopY;
+
+				double moveX = targetMinX - sheet.Bounds.MinX;
+				double moveY = targetMaxY - sheet.Bounds.MaxY;
+
+				SheetPlacement placement = new SheetPlacement();
+				placement.SourceSheet = sheet;
+				placement.SourceBounds = sheet.Bounds;
+				placement.TargetBottomLeft =
+					new CadPoint2D(targetMinX, targetMaxY - h);
+				placement.MoveX = moveX;
+				placement.MoveY = moveY;
+				placement.RowIndex = rowIndex;
+				placement.ColumnIndex = columnIndex;
+
+				result.Add(placement);
+
+				double placedBottomY = sheet.Bounds.MinY + moveY;
+
+				if (placedBottomY < currentRowBottomY)
+					currentRowBottomY = placedBottomY;
+
+				cursorX += w + columnGap;
+				columnIndex++;
+			}
+
+			return result;
+		}
+
+
+
 		private static void AppendLog(Editor ed, string message)
 		{
 			ed.WriteMessage("\n" + message);
