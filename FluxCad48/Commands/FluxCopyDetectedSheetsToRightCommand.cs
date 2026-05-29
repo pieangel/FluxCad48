@@ -1,14 +1,16 @@
 ﻿using Bricscad.ApplicationServices;
 using Bricscad.EditorInput;
 using FluxCad48.Brics;
+using FluxCad48.CopiedSheets;
 using FluxCad48.Geometry;
 using FluxCad48.ShapeViewAnalysis;
 using FluxCad48.ShapeViewAnalysis.Loops;
 using FluxCad48.Sheets;
-using FluxCad48.CopiedSheets;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text;
 using Teigha.Colors;
 using Teigha.DatabaseServices;
 using Teigha.Geometry;
@@ -21,6 +23,396 @@ namespace FluxCad48.Commands
 		private const string CopiedLayerName = "FLUX_COPIED";
 		private const string MarkerLayerName = "FLUX_MARKER";
 		private const string SheetCodeAppName = "FLUX_SHEET";
+
+		[CommandMethod("FLUX_DEBUG_DUMP_COPIED_SHEET_TEXTS")]
+		public void DebugDumpCopiedSheetTexts()
+		{
+			Document doc = Application.DocumentManager.MdiActiveDocument;
+			Editor ed = doc.Editor;
+			Database db = doc.Database;
+
+			PromptEntityOptions peo = new PromptEntityOptions(
+				"\n텍스트를 덤프할 복사된 쉬트 안의 개체를 선택하세요: ");
+
+			PromptEntityResult per = ed.GetEntity(peo);
+
+			if (per.Status != PromptStatus.OK)
+			{
+				AppendLog(ed, "[DumpCopiedSheetTexts] 선택이 취소되었습니다.");
+				return;
+			}
+
+			CopiedSheetRecord record =
+				CopiedSheetRegistry.FindByEntityId(per.ObjectId);
+
+			if (record == null)
+			{
+				AppendLog(ed, "[DumpCopiedSheetTexts] 선택한 개체가 CopiedSheetRegistry에 없습니다.");
+				return;
+			}
+
+			List<string> lines = new List<string>();
+
+			using (Transaction tr = db.TransactionManager.StartTransaction())
+			{
+				AddDumpLine(ed, lines, "");
+				AddDumpLine(ed, lines, "========================================");
+				AddDumpLine(ed, lines, "[Copied Sheet Text Dump]");
+				AddDumpLine(ed, lines, "SheetCode=" + record.SheetCode);
+				AddDumpLine(ed, lines, "CopiedEntityCount=" + record.CopiedEntityIds.Count);
+				AddDumpLine(ed, lines, "========================================");
+
+				int textCount = 0;
+				int dimCount = 0;
+
+				foreach (ObjectId id in record.CopiedEntityIds)
+				{
+					if (id.IsNull || id.IsErased)
+						continue;
+
+					Entity ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+					if (ent == null)
+						continue;
+
+					BlockReference br = ent as BlockReference;
+					if (br != null)
+					{
+						DumpBlockReferenceRecursive(ed, lines, tr, br, 0);
+						continue;
+					}
+
+					string rawText = TryGetDisplayText(ent);
+
+					if (string.IsNullOrWhiteSpace(rawText))
+						continue;
+
+					string normalized = NormalizeCadText(rawText);
+
+					if (ent is Dimension)
+						dimCount++;
+					else
+						textCount++;
+
+					DumpTextEntityToLines(ed, lines, ent, rawText, normalized);
+				}
+
+				AddDumpLine(ed, lines, "----------------------------------------");
+				AddDumpLine(ed, lines, "TextCount=" + textCount + ", DimensionTextCount=" + dimCount);
+				AddDumpLine(ed, lines, "[DumpCopiedSheetTexts] 완료");
+				AddDumpLine(ed, lines, "========================================");
+
+				tr.Commit();
+			}
+
+			string filePath = SaveCopiedSheetTextDump(db, record.SheetCode, lines);
+
+			AppendLog(ed, "");
+			AppendLog(ed, "[DumpCopiedSheetTexts] 텍스트 파일 저장 완료:");
+			AppendLog(ed, filePath);
+		}
+
+
+		private static void DumpBlockReferenceRecursive(
+	Editor ed,
+	List<string> lines,
+	Transaction tr,
+	BlockReference br,
+	int depth)
+		{
+			string indent = new string(' ', depth * 2);
+
+			AddDumpLine(ed, lines, "");
+			AddDumpLine(ed, lines, indent + "[BLOCK]");
+			AddDumpLine(ed, lines, indent + "Handle=" + br.Handle.ToString());
+			AddDumpLine(ed, lines, indent + "Layer=" + br.Layer);
+			AddDumpLine(ed, lines, indent + "BlockName=" + GetBlockName(tr, br));
+			AddDumpLine(ed, lines, indent + "Position=" + FormatPoint(br.Position));
+			AddDumpLine(ed, lines, indent + "AttributeCount=" + br.AttributeCollection.Count);
+
+			DumpBlockAttributes(ed, lines, tr, br, depth + 1);
+
+			BlockTableRecord btr =
+				tr.GetObject(br.BlockTableRecord, OpenMode.ForRead) as BlockTableRecord;
+
+			if (btr == null)
+				return;
+
+			foreach (ObjectId childId in btr)
+			{
+				if (childId.IsNull || childId.IsErased)
+					continue;
+
+				Entity child = tr.GetObject(childId, OpenMode.ForRead, false) as Entity;
+				if (child == null)
+					continue;
+
+				BlockReference childBr = child as BlockReference;
+				if (childBr != null)
+				{
+					DumpBlockReferenceRecursive(ed, lines, tr, childBr, depth + 1);
+					continue;
+				}
+
+				string rawText = TryGetDisplayText(child);
+				if (!string.IsNullOrWhiteSpace(rawText))
+				{
+					string normalized = NormalizeCadText(rawText);
+
+					AddDumpLine(ed, lines, "");
+					AddDumpLine(ed, lines, indent + "  [NESTED TEXT]");
+					AddDumpLine(ed, lines, indent + "  Type=" + child.GetType().Name);
+					AddDumpLine(ed, lines, indent + "  Layer=" + child.Layer);
+					AddDumpLine(ed, lines, indent + "  RawText=\"" + rawText + "\"");
+					AddDumpLine(ed, lines, indent + "  Normalized=\"" + normalized + "\"");
+				}
+			}
+		}
+
+
+
+		private static void DumpBlockAttributes(
+	Editor ed,
+	List<string> lines,
+	Transaction tr,
+	BlockReference br,
+	int depth)
+		{
+			string indent = new string(' ', depth * 2);
+
+			foreach (ObjectId attId in br.AttributeCollection)
+			{
+				if (attId.IsNull || attId.IsErased)
+					continue;
+
+				AttributeReference att =
+					tr.GetObject(attId, OpenMode.ForRead, false) as AttributeReference;
+
+				if (att == null)
+					continue;
+
+				AddDumpLine(ed, lines, "");
+				AddDumpLine(ed, lines, indent + "[ATTR]");
+				AddDumpLine(ed, lines, indent + "Tag=" + att.Tag);
+				AddDumpLine(ed, lines, indent + "TextString=\"" + att.TextString + "\"");
+				AddDumpLine(ed, lines, indent + "Layer=" + att.Layer);
+				AddDumpLine(ed, lines, indent + "Position=" + FormatPoint(att.Position));
+			}
+		}
+
+
+		private static void AddDumpLine(Editor ed, List<string> lines, string text)
+		{
+			lines.Add(text);
+			AppendLog(ed, text);
+		}
+
+		private static void DumpTextEntityToLines(
+	Editor ed,
+	List<string> lines,
+	Entity ent,
+	string rawText,
+	string normalized)
+		{
+			AddDumpLine(ed, lines, "");
+			AddDumpLine(ed, lines, "[TEXT]");
+			AddDumpLine(ed, lines, "Handle=" + ent.Handle.ToString());
+			AddDumpLine(ed, lines, "Type=" + ent.GetType().Name);
+			AddDumpLine(ed, lines, "Layer=" + ent.Layer);
+			AddDumpLine(ed, lines, "RawText=\"" + rawText + "\"");
+			AddDumpLine(ed, lines, "Normalized=\"" + normalized + "\"");
+
+			DBText dbText = ent as DBText;
+			if (dbText != null)
+			{
+				AddDumpLine(ed, lines, "Position=" + FormatPoint(dbText.Position));
+				AddDumpLine(ed, lines, "Height=" + dbText.Height.ToString("0.###"));
+				AddDumpLine(ed, lines, "RotationDeg=" + RadToDeg(dbText.Rotation).ToString("0.###"));
+			}
+
+			MText mText = ent as MText;
+			if (mText != null)
+			{
+				AddDumpLine(ed, lines, "Location=" + FormatPoint(mText.Location));
+				AddDumpLine(ed, lines, "TextHeight=" + mText.TextHeight.ToString("0.###"));
+				AddDumpLine(ed, lines, "RotationDeg=" + RadToDeg(mText.Rotation).ToString("0.###"));
+			}
+
+			Dimension dim = ent as Dimension;
+			if (dim != null)
+			{
+				AddDumpLine(ed, lines, "DimensionText=\"" + dim.DimensionText + "\"");
+				AddDumpLine(ed, lines, "Measurement=" + dim.Measurement.ToString("0.###"));
+			}
+
+			Extents3d? ext = TryGetExtents(ent);
+			if (ext.HasValue)
+			{
+				Extents3d e = ext.Value;
+				AddDumpLine(
+					ed,
+					lines,
+					"Bounds Min=" + FormatPoint(e.MinPoint) +
+					", Max=" + FormatPoint(e.MaxPoint));
+			}
+		}
+
+		private static string SaveCopiedSheetTextDump(
+	Database db,
+	string sheetCode,
+	List<string> lines)
+		{
+			string dwgPath = db.Filename;
+			string dir;
+
+			if (!string.IsNullOrWhiteSpace(dwgPath))
+				dir = Path.GetDirectoryName(dwgPath);
+			else
+				dir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+
+			string safeSheetCode = MakeSafeFileName(sheetCode);
+
+			string fileName =
+				"Flux_Dump_CopiedSheet_" +
+				safeSheetCode +
+				"_" +
+				DateTime.Now.ToString("yyyyMMdd_HHmmss") +
+				".txt";
+
+			string filePath = Path.Combine(dir, fileName);
+
+			File.WriteAllLines(filePath, lines, Encoding.UTF8);
+
+			return filePath;
+		}
+
+		private static string MakeSafeFileName(string text)
+		{
+			if (string.IsNullOrWhiteSpace(text))
+				return "Unknown";
+
+			foreach (char c in Path.GetInvalidFileNameChars())
+				text = text.Replace(c, '_');
+
+			return text;
+		}
+
+
+		private static string TryGetDisplayText(Entity ent)
+		{
+			DBText dbText = ent as DBText;
+			if (dbText != null)
+				return dbText.TextString;
+
+			MText mText = ent as MText;
+			if (mText != null)
+				return mText.Contents;
+
+			Dimension dim = ent as Dimension;
+			if (dim != null)
+			{
+				if (!string.IsNullOrWhiteSpace(dim.DimensionText))
+					return dim.DimensionText;
+
+				return dim.Measurement.ToString("0.###");
+			}
+
+			return null;
+		}
+
+		private static string NormalizeCadText(string text)
+		{
+			if (string.IsNullOrWhiteSpace(text))
+				return "";
+
+			string s = text;
+
+			s = s.Replace("\\P", " ");
+			s = s.Replace("\r", " ");
+			s = s.Replace("\n", " ");
+			s = s.Replace("\t", " ");
+
+			while (s.Contains("  "))
+				s = s.Replace("  ", " ");
+
+			return s.Trim();
+		}
+
+		private static void DumpTextEntity(
+			Editor ed,
+			Entity ent,
+			string rawText,
+			string normalized)
+		{
+			string handle = ent.Handle.ToString();
+			string typeName = ent.GetType().Name;
+			string layer = ent.Layer;
+
+			Extents3d? ext = TryGetExtents(ent);
+
+			AppendLog(ed, "");
+			AppendLog(ed, "[TEXT]");
+			AppendLog(ed, "Handle=" + handle);
+			AppendLog(ed, "Type=" + typeName);
+			AppendLog(ed, "Layer=" + layer);
+			AppendLog(ed, "RawText=\"" + rawText + "\"");
+			AppendLog(ed, "Normalized=\"" + normalized + "\"");
+
+			DBText dbText = ent as DBText;
+			if (dbText != null)
+			{
+				AppendLog(ed, "Position=" + FormatPoint(dbText.Position));
+				AppendLog(ed, "Height=" + dbText.Height.ToString("0.###"));
+				AppendLog(ed, "RotationDeg=" + RadToDeg(dbText.Rotation).ToString("0.###"));
+			}
+
+			MText mText = ent as MText;
+			if (mText != null)
+			{
+				AppendLog(ed, "Location=" + FormatPoint(mText.Location));
+				AppendLog(ed, "TextHeight=" + mText.TextHeight.ToString("0.###"));
+				AppendLog(ed, "RotationDeg=" + RadToDeg(mText.Rotation).ToString("0.###"));
+			}
+
+			Dimension dim = ent as Dimension;
+			if (dim != null)
+			{
+				AppendLog(ed, "DimensionText=\"" + dim.DimensionText + "\"");
+				AppendLog(ed, "Measurement=" + dim.Measurement.ToString("0.###"));
+			}
+
+			if (ext.HasValue)
+			{
+				Extents3d e = ext.Value;
+				AppendLog(ed,
+					"Bounds Min=" + FormatPoint(e.MinPoint) +
+					", Max=" + FormatPoint(e.MaxPoint));
+			}
+		}
+
+		private static Extents3d? TryGetExtents(Entity ent)
+		{
+			try
+			{
+				return ent.GeometricExtents;
+			}
+			catch
+			{
+				return null;
+			}
+		}
+
+		private static string FormatPoint(Point3d p)
+		{
+			return "(" +
+				p.X.ToString("0.###") + "," +
+				p.Y.ToString("0.###") + "," +
+				p.Z.ToString("0.###") + ")";
+		}
+
+		private static double RadToDeg(double rad)
+		{
+			return rad * 180.0 / Math.PI;
+		}
 
 
 		[CommandMethod("FLUX_DEBUG_COPIED_SHEET_REGISTRY")]

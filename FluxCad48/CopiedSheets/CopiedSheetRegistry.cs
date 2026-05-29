@@ -1,6 +1,8 @@
-﻿using System;
+﻿using FluxCad48.Sheets;
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using Teigha.DatabaseServices;
 
 namespace FluxCad48.CopiedSheets
 {
@@ -45,6 +47,17 @@ namespace FluxCad48.CopiedSheets
 		public static int Count
 		{
 			get { return _items.Count; }
+		}
+
+		public static CopiedSheetRecord FindByEntityId(ObjectId entityId)
+		{
+			foreach (CopiedSheetRecord sheet in _items.Values)
+			{
+				if (sheet.CopiedEntityIds.Contains(entityId))
+					return sheet;
+			}
+
+			return null;
 		}
 	}
 }
