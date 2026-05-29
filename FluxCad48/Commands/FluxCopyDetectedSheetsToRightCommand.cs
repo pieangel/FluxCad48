@@ -5,6 +5,7 @@ using FluxCad48.Geometry;
 using FluxCad48.ShapeViewAnalysis;
 using FluxCad48.ShapeViewAnalysis.Loops;
 using FluxCad48.Sheets;
+using FluxCad48.CopiedSheets;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -173,6 +174,13 @@ namespace FluxCad48.Commands
 					ObjectIdCollection idsToClone = new ObjectIdCollection();
 					HashSet<ObjectId> sourceTopLevelIds = new HashSet<ObjectId>();
 
+					CopiedSheets.CopiedSheetInfo copiedInfo = new CopiedSheets.CopiedSheetInfo();
+
+					copiedInfo.SheetCode = sheetCode;
+					copiedInfo.SourceBounds = placement.SourceBounds;
+					copiedInfo.MoveX = placement.MoveX;
+					copiedInfo.MoveY = placement.MoveY;
+
 					foreach (ObjectId id in placement.SourceSheet.EntityIds)
 					{
 						idsToClone.Add(id);
@@ -214,6 +222,8 @@ namespace FluxCad48.Commands
 
 						SetSheetCodeXData(tr, db, clonedEntity, sheetCode);
 
+						copiedInfo.AddCopiedEntity(pair.Key, pair.Value);
+
 						clonedCount++;
 					}
 
@@ -225,6 +235,8 @@ namespace FluxCad48.Commands
 						placement.SourceBounds.MaxX + placement.MoveX,
 						placement.SourceBounds.MaxY + placement.MoveY);
 
+					copiedInfo.CopiedBounds = copiedFrameBounds;
+
 					Polyline copiedFrame =
 						BricscadEntityTools.CreateRectanglePolyline(copiedFrameBounds);
 
@@ -235,6 +247,8 @@ namespace FluxCad48.Commands
 					modelSpace.AppendEntity(copiedFrame);
 					tr.AddNewlyCreatedDBObject(copiedFrame, true);
 					SetSheetCodeXData(tr, db, copiedFrame, sheetCode);
+
+					copiedInfo.CopiedFrameObjectId = copiedFrame.ObjectId;
 
 					Polyline sourceMarker =
 						BricscadEntityTools.CreateRectanglePolyline(
@@ -272,6 +286,10 @@ namespace FluxCad48.Commands
 					modelSpace.AppendEntity(copiedLabel);
 					tr.AddNewlyCreatedDBObject(copiedLabel, true);
 					SetSheetCodeXData(tr, db, copiedLabel, sheetCode);
+
+					copiedInfo.CopiedLabelObjectId = copiedLabel.ObjectId;
+
+					CopiedSheetRegistry.Register(copiedInfo);
 				}
 
 				tr.Commit();

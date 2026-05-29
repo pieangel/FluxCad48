@@ -1,0 +1,21 @@
+// 선택된 쉬트 프레임들을 쉬트 프레임 단위로 영역 오른쪽으로 복사. 
+FLUX_COPY_DETECTED_SHEETS_TO_RIGHT
+// 선택된 쉬트 프레임들을 쉬트 프레임 단위로 영역 오른쪽으로 복사. 개선 버전
+FLUX_COPY_DETECTED_SHEETS_TO_RIGHT_V2
+
+// view island를 보여줌. 
+FLUX_DEBUG_VIEW_ISLANDS
+// view island closed loop 를 보여줌. 
+FLUX_DEBUG_VIEW_ISLAND_CLOSED_LOOP
+// view island close loop 개체들을 쉬트 프레임 아래로 복사. 
+FLUX_COPY_VIEW_ISLAND_LOOP_ENTITIES_BELOW
+// 
+FLUX_DEBUG_CONTAINING_SHEET_FRAME
+
+FLUX_DEBUG_ANALYZE_COPIED_SHEET
+// 복사된 쉬트 프레임 내부에서 아무 개체나 하나 선택하면 쉬트 프레임 전체가 선택되게 함. 
+FLUX_SELECT_COPIED_SHEET_BY_PICK
+// 선택된 쉬트 프레임들을 쉬트 프레임 단위로 영역 오른쪽으로 복사. 빠른 버전
+FLUX_COPY_DETECTED_SHEETS_TO_RIGHT_FAST
+//핸들 번호를 넣으면 핸들에 관련된 개체의 정보들을 표시해 주는 명령. 
+FLUX_DEBUG_MARK_ENTITY_BY_HANDLE
