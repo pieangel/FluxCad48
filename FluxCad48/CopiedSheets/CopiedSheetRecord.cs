@@ -6,7 +6,7 @@ using Teigha.DatabaseServices;
 
 namespace FluxCad48.CopiedSheets
 {
-	public sealed class CopiedSheetInfo
+	public sealed class CopiedSheetRecord
 	{
 		public string SheetCode { get; set; }
 
@@ -31,7 +31,7 @@ namespace FluxCad48.CopiedSheets
 
 		public SheetMetadata Metadata { get; set; }
 
-		public CopiedSheetInfo()
+		public CopiedSheetRecord()
 		{
 			SheetCode = "";
 

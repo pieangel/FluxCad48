@@ -6,10 +6,10 @@ namespace FluxCad48.CopiedSheets
 {
 	public static class CopiedSheetRegistry
 	{
-		private static readonly Dictionary<string, CopiedSheetInfo> _items
-			= new Dictionary<string, CopiedSheetInfo>();
+		private static readonly Dictionary<string, CopiedSheetRecord> _items
+			= new Dictionary<string, CopiedSheetRecord>();
 
-		public static void Register(CopiedSheetInfo info)
+		public static void Register(CopiedSheetRecord info)
 		{
 			if (info == null)
 				return;
@@ -20,7 +20,7 @@ namespace FluxCad48.CopiedSheets
 			_items[info.SheetCode] = info;
 		}
 
-		public static bool TryGet(string sheetCode, out CopiedSheetInfo info)
+		public static bool TryGet(string sheetCode, out CopiedSheetRecord info)
 		{
 			info = null;
 
@@ -30,7 +30,7 @@ namespace FluxCad48.CopiedSheets
 			return _items.TryGetValue(sheetCode.Trim(), out info);
 		}
 
-		public static List<CopiedSheetInfo> GetAll()
+		public static List<CopiedSheetRecord> GetAll()
 		{
 			return _items.Values
 				.OrderBy(x => x.SheetCode)

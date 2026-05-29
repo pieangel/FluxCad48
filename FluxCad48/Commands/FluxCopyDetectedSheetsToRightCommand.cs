@@ -23,6 +23,32 @@ namespace FluxCad48.Commands
 		private const string SheetCodeAppName = "FLUX_SHEET";
 
 
+		[CommandMethod("FLUX_DEBUG_COPIED_SHEET_REGISTRY")]
+		public void FluxDebugCopiedSheetRegistry()
+		{
+			Document doc = Application.DocumentManager.MdiActiveDocument;
+			Editor ed = doc.Editor;
+
+			List<CopiedSheetRecord> sheets = CopiedSheetRegistry.GetAll();
+
+			ed.WriteMessage(
+				"\n[CopiedSheetRegistry] Count=" + sheets.Count);
+
+			foreach (CopiedSheetRecord sheet in sheets)
+			{
+				ed.WriteMessage(
+					"\n[CopiedSheet] Code=" + sheet.SheetCode +
+					", SourceEntities=" + sheet.SourceEntityIds.Count +
+					", CopiedEntities=" + sheet.CopiedEntityIds.Count +
+					", SourceBounds=" + sheet.SourceBounds +
+					", CopiedBounds=" + sheet.CopiedBounds +
+					", MoveX=" + sheet.MoveX.ToString("0.###") +
+					", MoveY=" + sheet.MoveY.ToString("0.###"));
+			}
+		}
+
+
+
 		[CommandMethod("FLUX_COPY_DETECTED_SHEETS_TO_RIGHT_FAST")]
 		public void FluxCopyDetectedSheetsToRightFast()
 		{
@@ -174,7 +200,7 @@ namespace FluxCad48.Commands
 					ObjectIdCollection idsToClone = new ObjectIdCollection();
 					HashSet<ObjectId> sourceTopLevelIds = new HashSet<ObjectId>();
 
-					CopiedSheets.CopiedSheetInfo copiedInfo = new CopiedSheets.CopiedSheetInfo();
+					CopiedSheetRecord copiedInfo = new CopiedSheetRecord();
 
 					copiedInfo.SheetCode = sheetCode;
 					copiedInfo.SourceBounds = placement.SourceBounds;

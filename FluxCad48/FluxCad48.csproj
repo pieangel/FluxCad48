@@ -107,8 +107,9 @@
     <Compile Include="Commands\FluxDetectPickWindowSheetFramesCommand.cs" />
     <Compile Include="Commands\FluxDetectSelectedSheetFramesCommand.cs" />
     <Compile Include="Commands\FluxPickFrameCopySheetToRightCommand.cs" />
-    <Compile Include="CopiedSheets\CopiedSheetInfo.cs" />
+    <Compile Include="CopiedSheets\CopiedSheetRecord.cs" />
     <Compile Include="CopiedSheets\CopiedSheetRegistry.cs" />
+    <Compile Include="CopiedSheets\CopiedSheetSnapshotBuilder.cs" />
     <Compile Include="CopiedSheets\SheetMetadata.cs" />
     <Compile Include="Geometry\Bounds2D.cs" />
     <Compile Include="Geometry\CadPoint2D.cs" />
