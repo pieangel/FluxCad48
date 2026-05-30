@@ -107,6 +107,12 @@
     <Compile Include="Commands\FluxDetectPickWindowSheetFramesCommand.cs" />
     <Compile Include="Commands\FluxDetectSelectedSheetFramesCommand.cs" />
     <Compile Include="Commands\FluxPickFrameCopySheetToRightCommand.cs" />
+    <Compile Include="CopiedSheetAnalysis\CopiedSheetAnalysisContext.cs" />
+    <Compile Include="CopiedSheetAnalysis\CopiedSheetAnalysisResult.cs" />
+    <Compile Include="CopiedSheetAnalysis\Thickness\ThicknessCandidate.cs" />
+    <Compile Include="CopiedSheetAnalysis\Thickness\ThicknessMatchResult.cs" />
+    <Compile Include="CopiedSheetAnalysis\ViewDetection\SheetViewCandidate.cs" />
+    <Compile Include="CopiedSheetAnalysis\ViewDetection\SheetViewRole.cs" />
     <Compile Include="CopiedSheets\CopiedSheetMetadataExtractor.cs" />
     <Compile Include="CopiedSheets\CopiedSheetRecord.cs" />
     <Compile Include="CopiedSheets\CopiedSheetRegistry.cs" />
