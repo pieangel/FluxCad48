@@ -77,7 +77,7 @@ namespace FluxCad48.CopiedSheetAnalysis.BorderConnectedFiltering
 			double width = bounds.MaxPoint.X - bounds.MinPoint.X;
 			double height = bounds.MaxPoint.Y - bounds.MinPoint.Y;
 
-			double maxThickness = Math.Min(width, height) / 2.0;
+			double maxThickness = Math.Min(width, height) / 0.12;
 			double ringThickness = maxThickness / ringCount;
 
 			for (int i = 0; i < ringCount; i++)
@@ -102,7 +102,7 @@ namespace FluxCad48.CopiedSheetAnalysis.BorderConnectedFiltering
 			double width = bounds.MaxPoint.X - bounds.MinPoint.X;
 			double height = bounds.MaxPoint.Y - bounds.MinPoint.Y;
 
-			double maxThickness = Math.Min(width, height) / 2.0;
+			double maxThickness = Math.Min(width, height) / 0.12;
 			double ringThickness = maxThickness / ringCount;
 
 			return Inflate(bounds, -(ringThickness * ringCount));
