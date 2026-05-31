@@ -5,6 +5,8 @@ namespace FluxCad48.CopiedSheetAnalysis.BorderConnectedFiltering
 {
 	public class OccupancyCell2d
 	{
+		public int Index { get; set; }
+
 		public int Row { get; set; }
 
 		public int Col { get; set; }
@@ -21,6 +23,7 @@ namespace FluxCad48.CopiedSheetAnalysis.BorderConnectedFiltering
 
 		public OccupancyCell2d()
 		{
+			Index = -1;
 			Row = 0;
 			Col = 0;
 			Min = new Point2d();

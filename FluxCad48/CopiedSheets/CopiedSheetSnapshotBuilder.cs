@@ -42,6 +42,89 @@ namespace FluxCad48.CopiedSheets
 			}
 		}
 
+		public static void AppendBlockAttributeSnapshot(
+	Transaction tr,
+	CopiedSheetRecord record,
+	Editor ed)
+		{
+			if (tr == null || record == null)
+				return;
+
+			foreach (ObjectId copiedId in record.CopiedEntityIds)
+			{
+				Entity ent =
+					tr.GetObject(
+						copiedId,
+						OpenMode.ForRead,
+						false) as Entity;
+
+				BlockReference br = ent as BlockReference;
+
+				if (br == null)
+					continue;
+
+				if (br.AttributeCollection == null)
+					continue;
+
+				foreach (ObjectId attId in br.AttributeCollection)
+				{
+					AttributeReference att =
+						tr.GetObject(
+							attId,
+							OpenMode.ForRead,
+							false) as AttributeReference;
+
+					if (att == null)
+						continue;
+
+					if (string.IsNullOrWhiteSpace(att.TextString))
+						continue;
+
+					SheetEntity se = new SheetEntity();
+
+					se.Kind = SheetEntityKind.InsertAttribute;
+
+					se.Handle = att.Handle.ToString();
+
+					se.EntityType = "AttributeReference";
+
+					se.Layer = att.Layer;
+
+					se.Text = att.TextString;
+
+					se.TextNormalized =
+						NormalizeText(att.TextString);
+
+					se.Anchor = new Point2D(
+						att.Position.X,
+						att.Position.Y);
+
+					se.Bounds = new Bounds2D(
+						att.Position.X,
+						att.Position.Y,
+						att.Position.X,
+						att.Position.Y);
+
+					se.IsVisible = true;
+
+					se.IsFromBlock = true;
+
+					se.SourceBlockName = br.Name;
+
+					record.CopiedEntities.Add(se);
+
+					if (ed != null)
+					{
+						ed.WriteMessage(
+							"\n[ATTR SNAPSHOT]" +
+							" Block=" + br.Name +
+							", Tag=" + att.Tag +
+							", Text=" + att.TextString);
+					}
+				}
+			}
+		}
+
 		private static SheetEntity CreateSheetEntity(Entity ent)
 		{
 			if (ent == null)

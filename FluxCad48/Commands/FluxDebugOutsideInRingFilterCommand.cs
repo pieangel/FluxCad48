@@ -2,11 +2,12 @@
 using Bricscad.EditorInput;
 using FluxCad48.CopiedSheetAnalysis.BorderConnectedFiltering;
 using FluxCad48.ShapeViewAnalysis;
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using Teigha.DatabaseServices;
 using Teigha.Geometry;
 using Teigha.Runtime;
-using System;
 
 namespace FluxCad48.Commands
 {
@@ -135,26 +136,46 @@ namespace FluxCad48.Commands
 				else
 					AppendLog(ed, "Bounds Source       : GroupBounds");
 
+
+				List<OccupancyCell2d> cells =
+	BuildSheetGridCells(sheetBounds, 40, 30);
+
+				StrokeOccupancyRasterizer rasterizer =
+					new StrokeOccupancyRasterizer(tr);
+
+				foreach (ObjectId id in visibleGeometryIds)
+				{
+					Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+					if (ent == null)
+						continue;
+
+					rasterizer.RasterizeEntity(
+						ent,
+						Matrix3d.Identity,
+						cells);
+				}
+
+				HashSet<int> occupiedCellIndexes =
+					cells
+						.Where(c => c.Occupied)
+						.Select(c => c.Index)
+						.ToHashSet();
+
+				DrawOccupiedGridCells(
+					db,
+					cells,
+					occupiedCellIndexes);
+
+				AppendLog(ed, "Grid Cell Count       : " + cells.Count);
+				AppendLog(ed, "Rasterized Entity Count : " + rasterizer.RasterizedEntityCount);
+				AppendLog(ed, "Occupied Cell Count   : " + occupiedCellIndexes.Count);
+				AppendLog(ed, "[OutsideInRingFilter] Occupied cell drawing 완료.");
+
+
 				tr.Commit();
 			}
 
-			List<OccupancyCell2d> cells =
-	BuildSheetGridCells(sheetBounds, 40, 30);
-
-			HashSet<int> occupiedCellIndexes =
-				BuildOccupiedCellIndexes(
-					db,
-					visibleGeometryIds,
-					cells);
-
-			DrawOccupiedGridCells(
-				db,
-				cells,
-				occupiedCellIndexes);
-
-			AppendLog(ed, "Grid Cell Count     : " + cells.Count);
-			AppendLog(ed, "Occupied Cell Count : " + occupiedCellIndexes.Count);
-			AppendLog(ed, "[OutsideInRingFilter] Occupied cell drawing 완료.");
+			
 
 
 			/*
@@ -592,7 +613,7 @@ namespace FluxCad48.Commands
 
 			double cellW = width / colCount;
 			double cellH = height / rowCount;
-
+			int index = 0;
 			for (int row = 0; row < rowCount; row++)
 			{
 				for (int col = 0; col < colCount; col++)
@@ -603,6 +624,7 @@ namespace FluxCad48.Commands
 					double y2 = y1 + cellH;
 
 					OccupancyCell2d cell = new OccupancyCell2d();
+					cell.Index = index++;
 					cell.Row = row;
 					cell.Col = col;
 					cell.Min = new Point2d(x1, y1);

@@ -28,20 +28,33 @@ namespace FluxCad48.CopiedSheets
 			// 1) BOM 행 기반으로 재질/수량 동시 추출
 			ExtractBomMetadataByMaterialRow(texts, metadata);
 
-			// 2) BOM 방식 실패 시 SET 수량 사용
+			// 2) 부가 수량 정보는 항상 조사
+			metadata.ExtraQuantityText = FindSetText(texts);
+
+			// BOM 수량이 없을 때만 부가 수량을 대표 수량으로 사용
 			if (string.IsNullOrWhiteSpace(metadata.QuantityText))
 			{
-				metadata.ExtraQuantityText = FindSetText(texts);
 				metadata.QuantityText =
 					ExtractQuantityFromSetText(metadata.ExtraQuantityText);
 			}
 
-			// 3) 마지막 fallback은 당분간 비활성 권장
-			// FindQuantityText는 치수값을 수량으로 오인할 위험이 큽니다.
-			/*
-			if (string.IsNullOrWhiteSpace(metadata.QuantityText))
-				metadata.QuantityText = FindQuantityText(texts);
-			*/
+			// 3) BOM 방식으로 재질을 못 찾으면 전체 텍스트에서 재질 후보 조사
+			if (string.IsNullOrWhiteSpace(metadata.Material))
+			{
+				metadata.Material = FindMaterialTextAnywhere(texts);
+			}
+
+			if (!string.IsNullOrWhiteSpace(metadata.QuantityText))
+			{
+				if (!string.IsNullOrWhiteSpace(metadata.ExtraQuantityText))
+					metadata.QuantityState = QuantityState.FromSet;
+				else
+					metadata.QuantityState = QuantityState.Exact;
+			}
+			else
+			{
+				metadata.QuantityState = QuantityState.Empty;
+			}
 
 			int qty;
 			if (int.TryParse(metadata.QuantityText, out qty))
@@ -50,6 +63,22 @@ namespace FluxCad48.CopiedSheets
 			record.Metadata = metadata;
 
 			return metadata;
+		}
+
+		private static string FindMaterialTextAnywhere(List<SheetEntity> texts)
+		{
+			foreach (SheetEntity ent in texts)
+			{
+				if (ent == null)
+					continue;
+
+				string s = NormalizeText(ent.Text);
+
+				if (LooksLikeMaterialValue(s))
+					return CleanMaterialValue(ent.Text);
+			}
+
+			return "";
 		}
 
 		private static void ExtractBomMetadataByMaterialRow(
@@ -484,13 +513,24 @@ namespace FluxCad48.CopiedSheets
 
 		private static bool IsMaterialHeader(string s)
 		{
+			if (string.IsNullOrWhiteSpace(s))
+				return false;
+
+			string t = s.Trim().ToUpperInvariant();
+
+			t = t.Replace(" ", "");
+			t = t.Replace(".", "");
+			t = t.Replace(":", "");
+
 			return
-				s == "MATL" ||
-				s == "MAT'L" ||
-				s == "MTL" ||
-				s == "MT'L" ||
-				s == "MATERIAL" ||
-				s == "재질";
+				t == "MATL" ||
+				t == "MAT'L" ||
+				t == "MTL" ||
+				t == "MT'L" ||
+				t == "MATERIAL" ||
+				t == "MATERIALS" ||
+				t.Contains("MATERIAL") ||
+				t == "재질";
 		}
 
 		private static bool IsQuantityHeader(string s)
@@ -521,14 +561,31 @@ namespace FluxCad48.CopiedSheets
 			if (string.IsNullOrWhiteSpace(s))
 				return false;
 
-			s = NormalizeText(s);
+			string raw = s.Trim();
+			string t = NormalizeText(s);
 
-			if (s.Contains("SS400")) return true;
-			if (s.Contains("SS41")) return true;
-			if (s.Contains("SUS")) return true;
-			if (s.Contains("SPHC")) return true;
-			if (s.Contains("AL")) return true;
-			if (s.Contains("SM45C")) return true;
+			// 도장/색상/비고 문장은 재질에서 제외
+			if (raw.Contains("도장") ||
+				raw.Contains("색상") ||
+				t.Contains("RAL") ||
+				t.Contains("KCC") ||
+				t.Contains("EX8816") ||
+				t.Contains("일반모따기") ||
+				t.Contains("총수량") ||
+				t.Contains("대칭"))
+				return false;
+
+			if (t.Contains("SS400")) return true;
+			if (t.Contains("SS41")) return true;
+			if (t.Contains("SUS304")) return true;
+			if (t.Contains("SUS316")) return true;
+			if (t.StartsWith("SUS")) return true;
+			if (t.Contains("SPHC")) return true;
+			if (t.Contains("SM45C")) return true;
+
+			// AL은 RAL1018 같은 색상 코드와 충돌하므로 단독 패턴으로만 인정
+			if (Regex.IsMatch(t, @"^AL[0-9A-Z\-]*$"))
+				return true;
 
 			return false;
 		}

@@ -114,6 +114,7 @@
     <Compile Include="CopiedSheetAnalysis\BorderConnectedFiltering\OutsideInRingFilterResult.cs" />
     <Compile Include="CopiedSheetAnalysis\BorderConnectedFiltering\RingBand.cs" />
     <Compile Include="CopiedSheetAnalysis\BorderConnectedFiltering\ShrinkingRegionState.cs" />
+    <Compile Include="CopiedSheetAnalysis\BorderConnectedFiltering\StrokeOccupancyRasterizer.cs" />
     <Compile Include="CopiedSheetAnalysis\BorderConnectedFiltering\StrokeSegment2d.cs" />
     <Compile Include="CopiedSheetAnalysis\CopiedSheetAnalysisContext.cs" />
     <Compile Include="CopiedSheetAnalysis\CopiedSheetAnalysisResult.cs" />

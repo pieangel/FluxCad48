@@ -2,6 +2,16 @@
 
 namespace FluxCad48.CopiedSheets
 {
+	public enum QuantityState
+	{
+		None,
+		Exact,
+		Empty,
+		FromSet,
+		Ambiguous,
+		Conflict
+	}
+
 	public sealed class SheetMetadata
 	{
 		public string Material { get; set; }
@@ -22,6 +32,8 @@ namespace FluxCad48.CopiedSheets
 
 		public List<string> RawTexts { get; private set; }
 		public List<string> Warnings { get; private set; }
+
+		public QuantityState QuantityState { get; set; }
 
 		public string DisplayQuantity
 		{

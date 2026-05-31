@@ -104,7 +104,7 @@ namespace FluxCad48.Commands
 	string layerName,
 	short colorIndex)
 		{
-			const double height = 70.0;
+			const double height = 50.0;
 			const double margin = 40.0;
 
 			DBText label = new DBText();
@@ -815,6 +815,11 @@ namespace FluxCad48.Commands
 						record,
 						ed);
 
+					CopiedSheetSnapshotBuilder.AppendBlockAttributeSnapshot(
+						tr,
+						record,
+						ed);
+
 					// 필요하면 바로 Metadata 추출도 가능
 					SheetMetadata metadata =
 						CopiedSheetMetadataExtractor.Extract(record);
@@ -867,8 +872,34 @@ namespace FluxCad48.Commands
 		{
 			string text =
 				record.SheetCode +
-				"  MAT : " + metadata.DisplayMaterial +
-				", QTY : " + metadata.DisplayQuantity;
+				"  MAT : " + metadata.DisplayMaterial;
+
+			switch (metadata.QuantityState)
+			{
+				case QuantityState.Exact:
+				case QuantityState.FromSet:
+					if (!string.IsNullOrWhiteSpace(metadata.QuantityText))
+						text += ", QTY : " + metadata.QuantityText;
+					break;
+
+				case QuantityState.Empty:
+					text += ", QTY : (EMPTY)";
+					break;
+
+				case QuantityState.Ambiguous:
+					text += ", QTY : ?";
+					break;
+
+				case QuantityState.Conflict:
+					text += ", QTY : [CONFLICT]";
+					break;
+			}
+
+			// SET 정보는 QTY와 별도로 항상 표시
+			if (!string.IsNullOrWhiteSpace(metadata.ExtraQuantityText))
+			{
+				text += ", SET : " + metadata.ExtraQuantityText;
+			}
 
 			DBText metadataLabel =
 				CreateCopiedSheetMetadataText(
