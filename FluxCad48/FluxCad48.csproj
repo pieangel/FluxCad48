@@ -102,12 +102,17 @@
     <Compile Include="Commands\FluxCopyDetectedSheetsToRightCommand.cs" />
     <Compile Include="Commands\FluxCopySelectedSheetsToRightCommand.cs" />
     <Compile Include="Commands\FluxDebugCopiedSheetAnalysisSeedCommand.cs" />
+    <Compile Include="Commands\FluxDebugOutsideInRingFilterCommand.cs" />
     <Compile Include="Commands\FluxDebugSelectedCoordsDeepCommand.cs" />
     <Compile Include="Commands\FluxDebugSelectedSheetUnitsCommand.cs" />
     <Compile Include="Commands\FluxDebugViewIslandsCommand.cs" />
     <Compile Include="Commands\FluxDetectPickWindowSheetFramesCommand.cs" />
     <Compile Include="Commands\FluxDetectSelectedSheetFramesCommand.cs" />
     <Compile Include="Commands\FluxPickFrameCopySheetToRightCommand.cs" />
+    <Compile Include="CopiedSheetAnalysis\BorderConnectedFiltering\OutsideInRingFilter.cs" />
+    <Compile Include="CopiedSheetAnalysis\BorderConnectedFiltering\OutsideInRingFilterResult.cs" />
+    <Compile Include="CopiedSheetAnalysis\BorderConnectedFiltering\RingBand.cs" />
+    <Compile Include="CopiedSheetAnalysis\BorderConnectedFiltering\ShrinkingRegionState.cs" />
     <Compile Include="CopiedSheetAnalysis\CopiedSheetAnalysisContext.cs" />
     <Compile Include="CopiedSheetAnalysis\CopiedSheetAnalysisResult.cs" />
     <Compile Include="CopiedSheetAnalysis\Thickness\ThicknessCandidate.cs" />
