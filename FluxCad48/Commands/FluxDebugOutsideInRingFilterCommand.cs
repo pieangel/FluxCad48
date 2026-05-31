@@ -102,6 +102,29 @@ namespace FluxCad48.Commands
 					visibleGeometryIds.Add(id);
 				}
 
+				AppendLog(ed, "---------- Visible Geometry Types ----------");
+
+				for (int i = 0; i < visibleGeometryIds.Count; i++)
+				{
+					ObjectId id = visibleGeometryIds[i];
+
+					using (Transaction tr2 = db.TransactionManager.StartTransaction())
+					{
+						Entity ent = tr2.GetObject(id, OpenMode.ForRead, false) as Entity;
+						if (ent != null)
+						{
+							AppendLog(
+								ed,
+								"[" + i + "] Handle=" + ent.Handle +
+								", Type=" + ent.GetType().Name +
+								", Layer=" + ent.Layer);
+						}
+
+						tr2.Commit();
+					}
+				}
+
+
 				AppendLog(ed, "========== Picked Copied Sheet ==========");
 				AppendLog(ed, "SheetCode           : " + pickResult.SheetCode);
 				AppendLog(ed, "Selected Group Count: " + pickResult.SelectedIds.Count);
@@ -116,12 +139,22 @@ namespace FluxCad48.Commands
 			}
 
 			List<OccupancyCell2d> cells =
-				BuildSheetGridCells(sheetBounds, 40, 30);
+	BuildSheetGridCells(sheetBounds, 40, 30);
 
-			DrawGridCells(db, cells);
+			HashSet<int> occupiedCellIndexes =
+				BuildOccupiedCellIndexes(
+					db,
+					visibleGeometryIds,
+					cells);
 
-			AppendLog(ed, "Grid Cell Count : " + cells.Count);
-			AppendLog(ed, "[OutsideInRingFilter] Grid cell drawing 완료.");
+			DrawOccupiedGridCells(
+				db,
+				cells,
+				occupiedCellIndexes);
+
+			AppendLog(ed, "Grid Cell Count     : " + cells.Count);
+			AppendLog(ed, "Occupied Cell Count : " + occupiedCellIndexes.Count);
+			AppendLog(ed, "[OutsideInRingFilter] Occupied cell drawing 완료.");
 
 
 			/*
@@ -147,6 +180,309 @@ namespace FluxCad48.Commands
 
 			AppendLog(ed, "[OutsideInRingFilter] 완료.");
 		}
+
+
+		private static void DrawOccupiedGridCells(
+	Database db,
+	List<OccupancyCell2d> cells,
+	HashSet<int> occupiedCellIndexes)
+		{
+			using (Transaction tr = db.TransactionManager.StartTransaction())
+			{
+				BlockTable bt =
+					(BlockTable)tr.GetObject(
+						db.BlockTableId,
+						OpenMode.ForRead);
+
+				BlockTableRecord ms =
+					(BlockTableRecord)tr.GetObject(
+						bt[BlockTableRecord.ModelSpace],
+						OpenMode.ForWrite);
+
+				foreach (int index in occupiedCellIndexes)
+				{
+					if (index < 0 || index >= cells.Count)
+						continue;
+
+					OccupancyCell2d cell = cells[index];
+
+					Polyline pl = new Polyline();
+
+					pl.AddVertexAt(
+						0,
+						new Point2d(cell.Min.X, cell.Min.Y),
+						0,
+						0,
+						0);
+
+					pl.AddVertexAt(
+						1,
+						new Point2d(cell.Max.X, cell.Min.Y),
+						0,
+						0,
+						0);
+
+					pl.AddVertexAt(
+						2,
+						new Point2d(cell.Max.X, cell.Max.Y),
+						0,
+						0,
+						0);
+
+					pl.AddVertexAt(
+						3,
+						new Point2d(cell.Min.X, cell.Max.Y),
+						0,
+						0,
+						0);
+
+					pl.Closed = true;
+					pl.ColorIndex = 1;
+
+					ms.AppendEntity(pl);
+					tr.AddNewlyCreatedDBObject(pl, true);
+				}
+
+				tr.Commit();
+			}
+		}
+
+
+		private static HashSet<int> BuildOccupiedCellIndexes(
+	Database db,
+	List<ObjectId> visibleGeometryIds,
+	List<OccupancyCell2d> cells)
+		{
+			HashSet<int> occupied =
+				new HashSet<int>();
+
+			using (Transaction tr = db.TransactionManager.StartTransaction())
+			{
+				for (int i = 0; i < visibleGeometryIds.Count; i++)
+				{
+					ObjectId id = visibleGeometryIds[i];
+
+					Entity ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+					if (ent == null)
+						continue;
+
+					Line line = ent as Line;
+					if (line != null)
+					{
+						MarkLineOccupiedCells(
+							line,
+							cells,
+							occupied);
+
+						continue;
+					}
+
+					Polyline pline = ent as Polyline;
+					if (pline != null)
+					{
+						MarkPolylineOccupiedCells(
+							pline,
+							cells,
+							occupied);
+
+						continue;
+					}
+
+					Arc arc = ent as Arc;
+					if (arc != null)
+					{
+						MarkArcOccupiedCells(
+							arc,
+							cells,
+							occupied);
+
+						continue;
+					}
+				}
+
+				tr.Commit();
+			}
+
+			return occupied;
+		}
+
+		private static void MarkArcOccupiedCells(
+	Arc arc,
+	List<OccupancyCell2d> cells,
+	HashSet<int> occupied)
+		{
+			double length =
+				Math.Abs(arc.TotalAngle) * arc.Radius;
+
+			if (length <= 1e-9)
+				return;
+
+			double cellSize = EstimateCellSize(cells);
+			double step = cellSize * 0.35;
+
+			int sampleCount =
+				Math.Max(8, (int)Math.Ceiling(length / step));
+
+			for (int i = 0; i <= sampleCount; i++)
+			{
+				double t = (double)i / sampleCount;
+
+				double angle =
+					arc.StartAngle +
+					arc.TotalAngle * t;
+
+				Point3d p = new Point3d(
+					arc.Center.X + Math.Cos(angle) * arc.Radius,
+					arc.Center.Y + Math.Sin(angle) * arc.Radius,
+					0);
+
+				MarkPointOccupiedCell(
+					p,
+					cells,
+					occupied);
+			}
+		}
+
+		private static void MarkLineOccupiedCells(
+	Line line,
+	List<OccupancyCell2d> cells,
+	HashSet<int> occupied)
+		{
+			Point3d p0 = line.StartPoint;
+			Point3d p1 = line.EndPoint;
+
+			double length = p0.DistanceTo(p1);
+			if (length <= 1e-9)
+				return;
+
+			double cellSize = EstimateCellSize(cells);
+			double step = cellSize * 0.35;
+
+			int sampleCount =
+				Math.Max(2, (int)Math.Ceiling(length / step));
+
+			for (int i = 0; i <= sampleCount; i++)
+			{
+				double t = (double)i / sampleCount;
+
+				Point3d p = new Point3d(
+					p0.X + (p1.X - p0.X) * t,
+					p0.Y + (p1.Y - p0.Y) * t,
+					0);
+
+				MarkPointOccupiedCell(
+					p,
+					cells,
+					occupied);
+			}
+		}
+
+		private static void MarkPolylineOccupiedCells(
+	Polyline pline,
+	List<OccupancyCell2d> cells,
+	HashSet<int> occupied)
+		{
+			int n = pline.NumberOfVertices;
+			if (n < 2)
+				return;
+
+			for (int i = 0; i < n - 1; i++)
+			{
+				Point3d p0 = pline.GetPoint3dAt(i);
+				Point3d p1 = pline.GetPoint3dAt(i + 1);
+
+				MarkSegmentOccupiedCells(
+					p0,
+					p1,
+					cells,
+					occupied);
+			}
+
+			if (pline.Closed)
+			{
+				Point3d p0 = pline.GetPoint3dAt(n - 1);
+				Point3d p1 = pline.GetPoint3dAt(0);
+
+				MarkSegmentOccupiedCells(
+					p0,
+					p1,
+					cells,
+					occupied);
+			}
+		}
+
+		private static void MarkSegmentOccupiedCells(
+	Point3d p0,
+	Point3d p1,
+	List<OccupancyCell2d> cells,
+	HashSet<int> occupied)
+		{
+			double length = p0.DistanceTo(p1);
+			if (length <= 1e-9)
+				return;
+
+			double cellSize = EstimateCellSize(cells);
+			double step = cellSize * 0.35;
+
+			int sampleCount =
+				Math.Max(2, (int)Math.Ceiling(length / step));
+
+			for (int i = 0; i <= sampleCount; i++)
+			{
+				double t = (double)i / sampleCount;
+
+				Point3d p = new Point3d(
+					p0.X + (p1.X - p0.X) * t,
+					p0.Y + (p1.Y - p0.Y) * t,
+					0);
+
+				MarkPointOccupiedCell(
+					p,
+					cells,
+					occupied);
+			}
+		}
+
+		private static void MarkPointOccupiedCell(
+	Point3d p,
+	List<OccupancyCell2d> cells,
+	HashSet<int> occupied)
+		{
+			for (int i = 0; i < cells.Count; i++)
+			{
+				if (PointInCell(p, cells[i]))
+				{
+					occupied.Add(i);
+					return;
+				}
+			}
+		}
+
+		private static bool PointInCell(
+	Point3d p,
+	OccupancyCell2d cell)
+		{
+			return
+				p.X >= cell.Min.X &&
+				p.X <= cell.Max.X &&
+				p.Y >= cell.Min.Y &&
+				p.Y <= cell.Max.Y;
+		}
+
+		private static double EstimateCellSize(
+	List<OccupancyCell2d> cells)
+		{
+			if (cells == null || cells.Count == 0)
+				return 1.0;
+
+			OccupancyCell2d cell = cells[0];
+
+			double w = cell.Width;
+			double h = cell.Height;
+
+			return Math.Max(1e-6, Math.Min(w, h));
+		}
+
 
 
 		private static bool TryGetCellKey(

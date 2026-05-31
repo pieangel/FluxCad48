@@ -1,4 +1,5 @@
-﻿using Teigha.Geometry;
+﻿using Teigha.DatabaseServices;
+using Teigha.Geometry;
 
 namespace FluxCad48.CopiedSheetAnalysis.BorderConnectedFiltering
 {
@@ -52,6 +53,16 @@ namespace FluxCad48.CopiedSheetAnalysis.BorderConnectedFiltering
 			get
 			{
 				return Max.Y - Min.Y;
+			}
+		}
+
+		public Extents3d Bounds
+		{
+			get
+			{
+				return new Extents3d(
+					new Point3d(Min.X, Min.Y, 0),
+					new Point3d(Max.X, Max.Y, 0));
 			}
 		}
 	}
